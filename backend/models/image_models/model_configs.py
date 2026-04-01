@@ -1,0 +1,62 @@
+MODEL_CONFIGS = {
+    "vit": {
+        "model_name": "vit_base_patch16_224",
+        "batch_size": 128,
+        "epochs": 15,
+        "base_lr": 3e-4,
+        "weight_decay": 1e-4,
+        "grad_clip": 1.0,
+        "warmup_epochs": 1,
+        "min_lr": 1e-6,
+        "patience": 2,
+        "min_delta": 0.005,
+        "ema_decay": 0.95,
+        "save_dir": "train/image_models/vit/checkpoints",
+    },
+
+    "convnext": {
+        "model_name": "convnext_base",
+        "batch_size": 128,
+        "epochs": 20,
+        "base_lr": 1e-4,
+        "weight_decay": 1e-4,
+        "grad_clip": 1.0,
+        "warmup_epochs": 2,
+        "min_lr": 1e-6,
+        "patience": 2,
+        "min_delta": 0.005,
+        "ema_decay": 0.95,
+        "save_dir": "train/image_models/convnext/checkpoints",
+    },
+
+    # future ready
+    "efficientnet": {
+        "model_name": "tf_efficientnet_b4",
+        "batch_size": 64,
+        "epochs": 20,
+        "base_lr": 1e-4,
+        "weight_decay": 1e-5,
+        "grad_clip": 1.0,
+        "warmup_epochs": 2,
+        "min_lr": 1e-6,
+        "patience": 2,
+        "min_delta": 0.005,
+        "ema_decay": 0.95,
+        "save_dir": "train/image_models/efficientnet/checkpoints",
+    },
+
+    "resnet50": {
+        "model_name": "resnet50.a1_in1k",
+        "batch_size": 128,
+        "epochs": 15,
+        "base_lr": 3e-4,
+        "weight_decay": 1e-4,
+        "grad_clip": 1.0,
+        "warmup_epochs": 1,
+        "min_lr": 1e-6,
+        "patience": 2,
+        "min_delta": 0.005,
+        "ema_decay": 0.95,
+        "save_dir": "train/image_models/resnet50/checkpoints",
+    }
+    }
