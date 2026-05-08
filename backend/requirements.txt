@@ -13,8 +13,6 @@ sqlalchemy
 # Env
 python-dotenv
 
-# ML / AI
-timm
 
 # File handling / utils
 pillow
