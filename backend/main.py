@@ -1,21 +1,20 @@
 import os
 import time
-import shutil
 import logging
 import uuid
 import threading
-import hashlib
+import json
+import subprocess
+import sys
 from datetime import datetime, timedelta
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, status, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-# Load env immediately
 load_dotenv()
 
-import torch
-from core import get_available_models, load_model_by_name, predict, predict_video
+from model_catalog import MODEL_LOADER_VERSION, get_public_models, resolve_model_key
 import models
 import auth
 import database
@@ -31,12 +30,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 AUTO_PURGE_AFTER = 60 * 10 
 IDLE_TIMEOUT = 60 * 5      
 ADMIN_EMAILS = ["ansonsaju007@gmail.com"]
-MIN_VRAM_MB = 1024 # 1GB Requirement
+MIN_VRAM_MB = 1024
+INFERENCE_WORKER = os.path.join(BASE_DIR, "inference_worker.py")
 
 app = FastAPI(title="DF-ENGINE | Neural Inference API")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DF-CLUSTER")
+logger.info(f"MODEL_LOADER: {MODEL_LOADER_VERSION}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -53,39 +54,60 @@ models.Base.metadata.create_all(bind=database.engine)
 job_queue = []
 job_status = {}  # job_id -> status
 job_results = {} # job_id -> result or config
-hash_to_job = {} # sha256 -> job_id
 
 queue_lock = threading.Lock()
 
-# --- GLOBAL MODEL CACHE ---
-loaded_models = {}
-model_last_used = {}
 last_activity = time.time()
 
-def get_model(model_name: str):
-    global last_activity
-    if model_name not in loaded_models:
-        model, _ = load_model_by_name(model_name)
-        loaded_models[model_name] = model
-    model_last_used[model_name] = time.time()
-    last_activity = time.time()
-    return loaded_models[model_name]
-
 # --- GPU VRAM CHECK ---
-def check_vram():
-    if not torch.cuda.is_available(): return
-    # get_info returns (free, total) in bytes
-    free, total = torch.cuda.mem_get_info()
-    free_mb = free / (1024**2)
-    if free_mb < MIN_VRAM_MB:
-        raise HTTPException(status_code=503, detail=f"Insufficient GPU memory ({free_mb:.0f}MB free)")
+def get_gpu_info():
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.free,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        name, free_mb, used_mb = [part.strip() for part in result.stdout.splitlines()[0].split(",")]
+        return {"name": name, "free_mb": float(free_mb), "used_mb": float(used_mb)}
+    except Exception:
+        return {"name": "CPU", "free_mb": None, "used_mb": 0.0}
 
-def get_gpu_peak_mb():
-    if torch.cuda.is_available():
-        peak = torch.cuda.max_memory_allocated() / (1024**2)
-        torch.cuda.reset_peak_memory_stats()
-        return peak
-    return 0
+def check_vram():
+    gpu = get_gpu_info()
+    if gpu["free_mb"] is not None and gpu["free_mb"] < MIN_VRAM_MB:
+        raise HTTPException(status_code=503, detail=f"Insufficient GPU memory ({gpu['free_mb']:.0f}MB free)")
+
+def run_isolated_inference(info):
+    cmd = [
+        sys.executable,
+        INFERENCE_WORKER,
+        "--model-key",
+        info["model_used"],
+        "--domain",
+        info["domain"],
+        "--path",
+        info["path"],
+    ]
+    if info["is_video"]:
+        cmd.append("--is-video")
+
+    result = subprocess.run(
+        cmd,
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"Inference worker exited with {result.returncode}"
+        raise RuntimeError(detail)
+    return json.loads(result.stdout.strip().splitlines()[-1])
 
 # --- BACKGROUND WORKER ---
 def worker_loop():
@@ -104,21 +126,18 @@ def worker_loop():
             
             logger.info(f"⚡ [WORKER] Processing {job_id} ({info['filename']})")
             
-            model = get_model(info["model_used"])
-            if info["is_video"]:
-                label, score = predict_video(model, info["path"])
-            else:
-                label, score = predict(model, info["path"])
-            
-            confidence = score if label == "REAL" else (1 - score)
+            inference = run_isolated_inference(info)
             
             # Store final result
             job_results[job_id] = {
                 "job_id": job_id,
-                "label": label,
-                "confidence": f"{confidence:.2%}",
-                "vram_peak": f"{get_gpu_peak_mb():.2f} MB",
+                "label": inference["label"],
+                "confidence": inference["confidence"],
+                "vram_peak": inference["vram_peak"],
+                "vram_reserved": "0.00 MB",
                 "model_used": info["model_used"],
+                "model_label": inference.get("model_label", info["model_used"]),
+                "domain": info["domain"],
                 "filename": info["filename"],
                 "timestamp": datetime.utcnow().isoformat()
             }
@@ -130,6 +149,17 @@ def worker_loop():
 
         except Exception as e:
             logger.error(f"❌ [WORKER] {job_id} Failed: {e}")
+            info = job_results.get(job_id, {})
+            job_results[job_id] = {
+                "job_id": job_id,
+                "error": str(e),
+                "model_used": info.get("model_used"),
+                "domain": info.get("domain"),
+                "filename": info.get("filename"),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if info.get("path") and os.path.exists(info["path"]):
+                os.remove(info["path"])
             job_status[job_id] = "failed"
 
 threading.Thread(target=worker_loop, daemon=True).start()
@@ -140,12 +170,6 @@ def cleanup_loop():
     while True:
         time.sleep(30)
         now = time.time()
-        for m_name, last_used in list(model_last_used.items()):
-            if now - last_used > IDLE_TIMEOUT:
-                if m_name in loaded_models:
-                    del loaded_models[m_name]
-                    del model_last_used[m_name]
-                    if torch.cuda.is_available(): torch.cuda.empty_cache()
         if now - last_activity > AUTO_PURGE_AFTER:
             for f in os.listdir(UPLOAD_DIR):
                 try: os.remove(os.path.join(UPLOAD_DIR, f))
@@ -203,25 +227,39 @@ async def read_users_me(current_user: models.User = Depends(auth.get_current_use
 
 @app.get("/system/status")
 async def system_status():
-    return {"status": "online", "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU", "models_cached": list(loaded_models.keys()), "queue": len(job_queue)}
+    gpu = get_gpu_info()
+    return {
+        "status": "online",
+        "gpu": gpu["name"],
+        "models_cached": [],
+        "queue": len(job_queue),
+        "model_loader": MODEL_LOADER_VERSION,
+        "cache_models": False,
+        "vram_reserved": f"{gpu['used_mb']:.2f} MB",
+    }
+
+@app.get("/models")
+async def list_models():
+    return {"models": get_public_models()}
 
 @app.post("/predict")
 async def run_prediction(model_name: str, file: UploadFile = File(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
     # 1. Validation
     meta = validate_file(file)
     check_vram()
+    is_video = meta["is_video"]
+    domain = "video" if is_video else "image"
 
-    # 2. Hashing for Cache/Deduplication
+    try:
+        resolved_model_name = resolve_model_key(model_name, domain)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # 2. Read upload content. Each request runs fresh inference.
     content = await file.read()
-    job_hash = hashlib.sha256(content + model_name.encode()).hexdigest()
     await file.seek(0)
 
-    if job_hash in hash_to_job:
-        existing_id = hash_to_job[job_hash]
-        return {"job_id": existing_id, "status": job_status[existing_id]}
-
     # 3. Credits
-    is_video = meta["is_video"]
     if current_user.role != "admin":
         if is_video and current_user.credits_video_used >= current_user.credits_video_total: raise HTTPException(status_code=402, detail="No VIDEO credits")
         if not is_video and current_user.credits_image_used >= current_user.credits_image_total: raise HTTPException(status_code=402, detail="No IMAGE credits")
@@ -235,8 +273,7 @@ async def run_prediction(model_name: str, file: UploadFile = File(...), current_
     with open(path, "wb") as buffer: buffer.write(content)
 
     job_status[job_id] = "queued"
-    job_results[job_id] = {"model_used": model_name, "path": path, "is_video": is_video, "filename": file.filename}
-    hash_to_job[job_hash] = job_id
+    job_results[job_id] = {"model_used": resolved_model_name, "domain": domain, "path": path, "is_video": is_video, "filename": file.filename}
     
     with queue_lock:
         job_queue.append(job_id)
@@ -248,7 +285,8 @@ async def get_job_status(job_id: str):
     if job_id not in job_status: raise HTTPException(status_code=404)
     return {
         "status": job_status[job_id],
-        "result": job_results[job_id] if job_status[job_id] == "done" else None
+        "result": job_results[job_id] if job_status[job_id] == "done" else None,
+        "error": job_results[job_id] if job_status[job_id] == "failed" else None,
     }
 
 # --- PAYMENTS ---
@@ -280,4 +318,4 @@ async def verify_payment(order_id: str = Form(...), payment_id: str = Form(...),
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=82, log_config=None)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), log_config=None)

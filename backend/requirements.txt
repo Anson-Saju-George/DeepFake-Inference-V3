@@ -1,0 +1,28 @@
+# FastAPI stack
+fastapi[all]
+uvicorn[standard]
+python-multipart
+
+# Auth & security
+python-jose[cryptography]
+passlib[bcrypt]
+
+# Database
+sqlalchemy
+
+# Env
+python-dotenv
+
+# ML / AI
+timm
+
+# File handling / utils
+pillow
+opencv-python
+numpy
+
+# Payments
+razorpay
+
+# Optional but recommended
+requests

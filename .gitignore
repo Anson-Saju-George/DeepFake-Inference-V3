@@ -1,19 +1,21 @@
 # --- [ DEPENDENCIES ] ---
 node_modules/
 backend/venv/
+backend/.venv/
 .venv/
 env/
+backend/env/
 venv.bak/
 *.pip
 
 # --- [ FRONTEND: REACT / VITE ] ---
-deep-fake-app/dist/
-deep-fake-app/stats.html
-deep-fake-app/.env
-deep-fake-app/.env.local
-deep-fake-app/.env.development.local
-deep-fake-app/.env.test.local
-deep-fake-app/.env.production.local
+dist/
+stats.html
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # --- [ BACKEND: PYTHON / FASTAPI ] ---
 __pycache__/
@@ -39,19 +41,21 @@ share/python-wheels/
 MANIFEST
 
 # --- [ AI / ML WEIGHTS & LOGS ] ---
-# Ignoring the heavy model checkpoints (PTH files) to avoid Git bloat
-# We keep the directory structure but ignore the actual binaries
-backend/models/image_models/*/checkpoints/*.pth
-backend/models/image_models/*/old_checkpoints/
+# Keep local model directories, checkpoints, and metadata out of Git.
+backend/models/
 *.pth
+*.pt
+*.ckpt
+*.safetensors
 *.weights
 *.h5
 backend/train_log.log
-backend/models/image_models/train_log.log
+backend/models/
 *.log
 
 # --- [ STORAGE & PERSISTENCE ] ---
-# Ignore actual uploaded files and the SQLite database
+# Ignore local media, uploaded files, temp output, and the SQLite database
+backend/samples/
 backend/storage/uploads/*
 !backend/storage/uploads/.keep
 backend/storage/df_engine.db
@@ -71,3 +75,6 @@ Thumbs.db
 *.swp
 *.swo
 
+# --- [ OLD / LOCAL DUPLICATES ] ---
+# Frontend was flattened to the repo root; keep the old nested copy out of commits.
+deep-fake-app/
