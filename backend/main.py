@@ -6,6 +6,7 @@ import threading
 import json
 import subprocess
 import sys
+import shutil
 from datetime import datetime, timedelta
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,11 +61,24 @@ queue_lock = threading.Lock()
 last_activity = time.time()
 
 # --- GPU VRAM CHECK ---
+def get_nvidia_smi_path():
+    configured_path = os.getenv("NVIDIA_SMI_PATH")
+    candidates = [
+        configured_path,
+        shutil.which("nvidia-smi"),
+        "/usr/bin/nvidia-smi",
+        "/usr/local/bin/nvidia-smi",
+    ]
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    return "nvidia-smi"
+
 def get_gpu_info():
     try:
         result = subprocess.run(
             [
-                "nvidia-smi",
+                get_nvidia_smi_path(),
                 "--query-gpu=name,memory.free,memory.used",
                 "--format=csv,noheader,nounits",
             ],
@@ -75,7 +89,8 @@ def get_gpu_info():
         )
         name, free_mb, used_mb = [part.strip() for part in result.stdout.splitlines()[0].split(",")]
         return {"name": name, "free_mb": float(free_mb), "used_mb": float(used_mb)}
-    except Exception:
+    except Exception as exc:
+        logger.warning("GPU status probe failed, reporting CPU: %s", exc)
         return {"name": "CPU", "free_mb": None, "used_mb": 0.0}
 
 def check_vram():

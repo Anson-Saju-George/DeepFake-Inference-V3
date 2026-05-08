@@ -1,79 +1,214 @@
-# 📄 DF-ENGINE Project Technical Status Report
+# DF-ENGINE Project Technical Status Report
 
-**Project Version:** 3.1.0-Research  
-**Deployment Date:** April 1, 2026  
-**Environment:** Nginx + Gunicorn + Cloudflare + FastAPI + React v19
-
----
-
-## 🔬 1. Neural Architecture & Model Performance
-
-The core of DF-Engine is a heterogeneous ensemble designed to address the "generalization gap" in deepfake detection.
-
-### A. Model Ensemble Breakdown
-1.  **ConvNeXt-Base (Spatial Backbone)**:
-    *   **Architecture:** Modernized CNN with depthwise convolutions and 7x7 kernels.
-    *   **Role:** Primary spatial feature extractor. Modern convolution blocks allow for better multi-scale artifact detection than traditional ResNets.
-    *   **Peak F1-Score:** 0.9820 (Native Validation).
-2.  **ViT-B/16 (Global Attention)**:
-    *   **Architecture:** Vision Transformer with 16x16 patch embeddings.
-    *   **Role:** Identifies non-local inconsistencies and long-range pixel correlations that signal synthetic blending.
-    *   **Peak F1-Score:** 0.8536 (Native Validation).
-3.  **ResNet-50 (Baseline Validator)**:
-    *   **Role:** Provides a stable residual gradient flow for high-speed initial screening.
-
-### B. Cross-Dataset Generalization (Celeb-DF)
-To verify real-world robustness, models were tested zero-shot on the Celeb-DF dataset:
-*   **ConvNeXt ROC-AUC:** 0.6498
-*   **ViT ROC-AUC:** 0.4565
-*   *Observation:* ConvNeXt showed significantly higher domain adaptation, justifying its use as the default inference architecture.
+**Project Version:** 4.0.0 Research Demo  
+**Last Updated:** May 8, 2026  
+**Environment:** React 19 + Vite + Tailwind + FastAPI + SQLite + local CUDA inference
 
 ---
 
-## ⚙️ 2. Backend Infrastructure (FastAPI)
+## 1. Current Project Shape
 
-The backend was refactored from a simple API to a **Distributed State Machine** capable of managing high-load GPU clusters.
+DF-Engine is now a flattened React/Vite application at the repository root with the FastAPI backend in `backend/`.
 
-### A. Asynchronous Hashed-Queue System
-*   **Deduplication:** Implemented SHA256 content-based hashing (`hashlib.sha256(file_content + model_name)`). 
-*   **Mechanism:** If a file hash exists in the `hash_to_job` cache, the system returns the result in O(1) time without triggering the GPU.
-*   **Concurrency:** FIFO worker thread handles sequential job processing to prevent CUDA race conditions.
+The old nested `deep-fake-app/` folder has been removed. Frontend source now lives directly in:
 
-### B. Intelligent Resource Management
-*   **VRAM Safety Guard:** Prior to execution, the system queries `torch.cuda.mem_get_info()`. A hard floor of **1GB free VRAM** is required to proceed, returning a `503 Service Unavailable` if the cluster is saturated.
-*   **Idle Model Offloading:** Implemented a 5-minute `IDLE_TIMEOUT`. Inactive model weights are purged from VRAM (`del models[m]`, `empty_cache()`) to free resources for other tasks.
-*   **Automated Storage Persistence:** ephemeral data in `storage/uploads` is purged after 10 minutes of inactivity using a background `cleanup_loop`.
+- `src/`
+- `index.html`
+- `vite.config.js`
+- `package.json`
 
----
+Backend source lives in:
 
-## 🎨 3. Frontend Architecture (React v19)
+- `backend/main.py`
+- `backend/core.py`
+- `backend/model_catalog.py`
+- `backend/inference_worker.py`
+- `backend/auth.py`
+- `backend/database.py`
+- `backend/models.py`
+- `backend/payments.py`
+- `backend/validator.py`
 
-Designed with a "Light Glass" UI aesthetic focusing on technical transparency and low-latency interaction.
+Local-only folders are ignored by Git:
 
-### A. Centralized Telemetry
-*   **`useSystemStatus` Hook:** A custom hook that centralizes the polling of the `/system/status` endpoint. 
-*   **UI Synchronization:** Ensures the "Cluster Online" indicator and GPU model name are synchronized across the Hero and LiveDemo components, reducing network overhead.
-
-### B. User Interaction & Visualization
-*   **Drag & Drop Ingestion:** Native browser event handling with Framer Motion spring-physics for visual feedback.
-*   **Data Visualization:** Integrated `Recharts` to render real-time training curves and confusion matrices, providing empirical proof of model integrity to the user.
-
----
-
-## 🌐 4. Deployment Stack & Security
-
-### A. Reverse Proxy Configuration
-*   **Nginx Subpath Routing:** Configured to serve the application from `/deepfake/`. All API calls are routed via `/deepfake/api/` using a trailing-slash rewrite to maintain endpoint integrity.
-*   **Gunicorn/Uvicorn:** Utilized Gunicorn as a process manager with Uvicorn workers on **Port 82** for high-concurrency production throughput.
-
-### B. Identity & Billing
-*   **Google OAuth2:** Restricted node initialization to verified Google identities.
-*   **Tiered Credits:** Implemented separate database schemas for **Image** and **Video** processing tracks.
-*   **Razorpay Integration:** Secure, category-aware payment gateway for provisioning additional compute credits (₹10 for images / ₹20 for videos).
+- `backend/models/`
+- `backend/temp/`
+- `backend/samples/`
+- `backend/.env`
+- `node_modules/`
+- `dist/`
 
 ---
 
-## 🏁 Summary for Research Paper
-*   **Primary Research Contribution:** Successful implementation of a high-throughput, resource-aware inference cluster that bridges the gap between raw ML research and production-grade SaaS architecture.
-*   **Hardware Efficiency:** Demonstrated effective VRAM management via automated offloading and peak memory tracking.
-*   **Generalization Analysis:** Empirical evidence shows modernized CNNs (ConvNeXt) currently outperform Transformers (ViT) in cross-dataset zero-shot deepfake detection scenarios.
+## 2. Research and Model Status
+
+The project now treats image and video deepfake detection as separate inference domains instead of one pooled task.
+
+### Image Domain
+
+Image uploads are routed to image-trained spatial models.
+
+Current visible model family:
+
+- ConvNeXt image models
+- Swin image models
+- ViT image models
+
+Best displayed image benchmark:
+
+- **ConvNeXt-Base Image**
+- **98.63% accuracy**
+- **0.9863 F1**
+- Dataset family: `image_combined`
+
+### Video Domain
+
+Video uploads are routed to video-trained models. The backend distinguishes raw video inference from image inference before model resolution.
+
+Current visible video model family:
+
+- ConvNeXt spatial video
+- ConvNeXt hybrid video
+- ConvNeXt sequence video
+- Swin video
+- MaxViT hybrid video
+
+Best displayed video benchmark:
+
+- **ConvNeXt Hybrid / Sequence Video**
+- **90.89% accuracy**
+- **0.7841 F1**
+- Dataset family: `video_combined`
+
+### Important Implementation Note
+
+The public model list is discovered from local model metadata in `backend/models/`, but that directory is intentionally ignored by Git. Runtime machines must have the model folders and checkpoint files present locally.
+
+---
+
+## 3. Backend Architecture
+
+The backend has been refactored around domain-aware model discovery and isolated inference.
+
+### Active Runtime Flow
+
+1. Frontend uploads an image or video to `/predict`.
+2. `backend/validator.py` classifies the upload as image or video.
+3. `backend/model_catalog.py` resolves the requested model key against the correct domain.
+4. The job is queued by `backend/main.py`.
+5. `backend/inference_worker.py` runs inference in a separate Python subprocess.
+6. The subprocess exits after inference, releasing model memory instead of keeping weights resident in the API process.
+7. `/status/{job_id}` returns the final result.
+
+### Why Subprocess Inference Is Used
+
+Earlier versions kept models loaded in the main API process and attempted cache/offload management. The current design avoids persistent model residency by running each inference in an isolated worker process.
+
+Current behavior:
+
+- No long-lived model cache in the FastAPI process
+- `models_cached` reports an empty list
+- `cache_models` reports `false`
+- Result payload reports `vram_reserved: "0.00 MB"`
+- CUDA context residue may still exist at the driver/process level while active processes are running, but model weights are not intentionally retained by the app
+
+### Backend API Port
+
+Development backend runs on:
+
+```bash
+http://127.0.0.1:8000
+```
+
+Run it with:
+
+```bash
+cd backend
+python main.py
+```
+
+---
+
+## 4. Frontend Architecture
+
+The frontend is served by Vite with base path:
+
+```js
+base: "/deepfake/"
+```
+
+API calls are proxied through:
+
+```text
+/deepfake/api -> http://127.0.0.1:8000
+```
+
+Main frontend areas:
+
+- Hero section with current image/video benchmark highlights
+- Research lifecycle page at `/deepfake/research`
+- Multi-architecture inference engine section
+- Inference pipeline section
+- Technical benchmarks section
+- Live demo with image/video domain-aware model selection
+- Compact credit purchase section
+- Footer links to GitHub, Hugging Face datasets, and Hugging Face model weights
+
+The navbar logo and `DF-ENGINE` brand link now route back to the home hero section.
+
+---
+
+## 5. Auth, Credits, and Payments
+
+The backend keeps SQLAlchemy database models in `backend/models.py`. This file is required and should not be confused with ML model files.
+
+It defines:
+
+- `User`
+- `Job`
+- `Transaction`
+
+Implemented account features:
+
+- Google OAuth login
+- Admin dev login route
+- Separate image and video credit accounting
+- Razorpay order creation and verification
+
+---
+
+## 6. Verification Status
+
+Latest checks completed successfully:
+
+```bash
+npm run build
+python -m py_compile backend\main.py backend\core.py backend\model_catalog.py backend\inference_worker.py backend\auth.py backend\database.py backend\models.py backend\payments.py backend\validator.py
+```
+
+`npm run build` passes with only the standard Vite large chunk warning.
+
+`npm run lint` currently fails on code-quality rules that are not related to the folder move:
+
+- unused caught error variables
+- React hook lint warnings for synchronous state updates inside effects
+- `Math.random()` used during render in the architecture visualization
+- a mutable local index in the research content renderer
+
+The deleted `deep-fake-app/` folder is not referenced by active runtime files.
+
+---
+
+## 7. Current Commit Notes
+
+Expected staged changes include:
+
+- flattened frontend from `deep-fake-app/` to repo root
+- updated `.gitignore`
+- backend subprocess inference worker
+- domain-aware model catalog
+- frontend research/live demo/benchmark/copy updates
+- removal of old tracked sample media and old model training scripts
+
+`backend/models/` is intentionally ignored and should not be committed.
+

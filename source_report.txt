@@ -1,45 +1,45 @@
 ========================================
 PROJECT SOURCE REPORT
 Root: .
-Generated: 2026-04-01 19:40:52.409453
+Generated: 2026-05-08 17:22:26.402268
 Total Files Captured: 33
 ========================================
 
 FILE TREE
 ----------------------------------------
 .\auditor.py
+.\eslint.config.js
+.\index.html
+.\vite.config.js
 .\backend\auth.py
 .\backend\core.py
 .\backend\database.py
+.\backend\inference_worker.py
 .\backend\main.py
 .\backend\models.py
+.\backend\model_catalog.py
 .\backend\payments.py
-.\backend\web_tester.py
-.\backend\models\image_models\base_evaluator.py
-.\backend\models\image_models\base_trainer.py
-.\backend\models\image_models\model_configs.py
-.\backend\models\image_models\run.py
-.\backend\models\image_models\run_eval.py
+.\backend\validator.py
 .\backend\temp\tester.py
 .\backend\temp\web_tester.py
-.\deep-fake-app\eslint.config.js
-.\deep-fake-app\index.html
-.\deep-fake-app\vite.config.js
-.\deep-fake-app\src\App.css
-.\deep-fake-app\src\App.jsx
-.\deep-fake-app\src\index.css
-.\deep-fake-app\src\main.jsx
-.\deep-fake-app\src\components\Architecture.jsx
-.\deep-fake-app\src\components\AuthModal.jsx
-.\deep-fake-app\src\components\Benchmarks.jsx
-.\deep-fake-app\src\components\Footer.jsx
-.\deep-fake-app\src\components\Hero.jsx
-.\deep-fake-app\src\components\LiveDemo.jsx
-.\deep-fake-app\src\components\Navbar.jsx
-.\deep-fake-app\src\components\Pipeline.jsx
-.\deep-fake-app\src\components\Pricing.jsx
-.\deep-fake-app\src\components\Setup.jsx
-.\deep-fake-app\src\hooks\useSystemStatus.js
+.\src\App.css
+.\src\App.jsx
+.\src\index.css
+.\src\main.jsx
+.\src\components\Architecture.jsx
+.\src\components\AuthModal.jsx
+.\src\components\Benchmarks.jsx
+.\src\components\Footer.jsx
+.\src\components\Hero.jsx
+.\src\components\LiveDemo.jsx
+.\src\components\Navbar.jsx
+.\src\components\Pipeline.jsx
+.\src\components\Pricing.jsx
+.\src\components\Research.jsx
+.\src\components\Setup.jsx
+.\src\hooks\useSystemStatus.js
+.\src\models\inferenceModels.js
+.\src\research\researchDocuments.js
 
 ========================================
 
@@ -136,6 +136,87 @@ if __name__ == "__main__":
 
 ----------------------------------------
 
+--- FILE: eslint.config.js ---
+PATH: .\eslint.config.js
+----------------------------------------
+import js from '@eslint/js'
+import globals from 'globals'
+import reactHooks from 'eslint-plugin-react-hooks'
+import reactRefresh from 'eslint-plugin-react-refresh'
+import { defineConfig, globalIgnores } from 'eslint/config'
+
+export default defineConfig([
+  globalIgnores(['dist']),
+  {
+    files: ['**/*.{js,jsx}'],
+    extends: [
+      js.configs.recommended,
+      reactHooks.configs.flat.recommended,
+      reactRefresh.configs.vite,
+    ],
+    languageOptions: {
+      ecmaVersion: 2020,
+      globals: globals.browser,
+      parserOptions: {
+        ecmaVersion: 'latest',
+        ecmaFeatures: { jsx: true },
+        sourceType: 'module',
+      },
+    },
+    rules: {
+      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
+    },
+  },
+])
+
+----------------------------------------
+
+--- FILE: index.html ---
+PATH: .\index.html
+----------------------------------------
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DF-ENGINE | AI Video Intelligence</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+
+----------------------------------------
+
+--- FILE: vite.config.js ---
+PATH: .\vite.config.js
+----------------------------------------
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import tailwindcss from '@tailwindcss/vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  base: '/deepfake/',
+  plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      '/deepfake/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/deepfake\/api/, '')
+      }
+    }
+  }
+})
+
+----------------------------------------
+
 --- FILE: auth.py ---
 PATH: .\backend\auth.py
 ----------------------------------------
@@ -204,152 +285,118 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 --- FILE: core.py ---
 PATH: .\backend\core.py
 ----------------------------------------
+import json
 import os
-import torch
-import timm
+import re
+
 import cv2
 import numpy as np
+import timm
+import torch
 from PIL import Image
 from torchvision import transforms
 
-# Device setup
+from model_catalog import (
+    MODEL_LOADER_VERSION,
+    get_available_models,
+    get_public_models,
+    resolve_model_key,
+)
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+THRESHOLD = 0.50
 
-# Model configuration mapping based on directory names
-MODEL_MAP = {
-    "convnext": "convnext_base",
-    "resnet50": "resnet50.a1_in1k",
-    "efficientnet": "tf_efficientnet_b4"
-}
-
-# Standard transforms for models like ViT and ConvNext
 transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-def get_available_models():
-    """Returns a list of available models and their best scores."""
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    base_path = os.path.join(current_dir, "models", "image_models")
-    
-    available = {}
-    
-    if not os.path.exists(base_path):
-        return available
-
-    for model_dir in os.listdir(base_path):
-        # Only include architectures defined in MODEL_MAP
-        model_key = model_dir.split('_')[0]
-        if model_key not in MODEL_MAP:
-            continue
-            
-        dir_path = os.path.join(base_path, model_dir)
-        if not os.path.isdir(dir_path):
-            continue
-            
-        checkpoint_dir = os.path.join(dir_path, "checkpoints")
-        if not os.path.exists(checkpoint_dir):
-            continue
-            
-        best_score = -1.0
-        best_path = None
-        
-        for file in os.listdir(checkpoint_dir):
-            if file.startswith("best_") and file.endswith(".pth"):
-                try:
-                    score = float(file.replace("best_", "").replace(".pth", ""))
-                    if score > best_score:
-                        best_score = score
-                        best_path = os.path.join(checkpoint_dir, file)
-                except ValueError:
-                    continue
-        
-        if best_path:
-            available[model_dir] = {
-                "score": best_score,
-                "path": best_path,
-                "model_name": MODEL_MAP.get(model_dir.split('_')[0], model_dir.split('_')[0])
-            }
-            
-    return available
-
-def load_model_by_name(model_key):
-    """Loads a specific model by its key (e.g., 'vit', 'convnext')."""
-    available = get_available_models()
+def load_model_by_name(model_key, domain=None):
+    available = get_available_models(domain)
     if model_key not in available:
-        raise ValueError(f"❌ Model '{model_key}' not found or has no checkpoints.")
-    
+        raise ValueError(f"Model '{model_key}' not found for domain '{domain or 'any'}'.")
+
     config = available[model_key]
-    print(f"📂 Loading {model_key} model...")
-    print(f"📍 Checkpoint: {config['path']}")
-    
-    model = timm.create_model(config['model_name'], pretrained=False, num_classes=2)
-    model.load_state_dict(torch.load(config['path'], map_location=DEVICE))
+    model = timm.create_model(config["model_name"], pretrained=False, num_classes=2)
+    checkpoint = torch.load(config["path"], map_location=DEVICE)
+    if isinstance(checkpoint, dict):
+        state_dict = (
+            checkpoint.get("state_dict")
+            or checkpoint.get("model_state_dict")
+            or checkpoint.get("model")
+            or checkpoint
+        )
+    else:
+        state_dict = checkpoint
+
+    if isinstance(state_dict, dict):
+        cleaned_state_dict = {}
+        for key, value in state_dict.items():
+            clean_key = key
+            for prefix in ("module.", "model.", "backbone."):
+                if clean_key.startswith(prefix):
+                    clean_key = clean_key[len(prefix):]
+            cleaned_state_dict[clean_key] = value
+        state_dict = cleaned_state_dict
+
+    model.load_state_dict(state_dict)
     model = model.to(DEVICE)
     model.eval()
     return model, config
 
-def get_latest_model():
-    """Finds and loads the best overall model across all architectures."""
-    available = get_available_models()
+
+def get_latest_model(domain=None):
+    available = get_available_models(domain)
     if not available:
-        raise FileNotFoundError("❌ No model checkpoints found!")
-    
-    # Sort by score descending
-    best_key = max(available, key=lambda k: available[k]['score'])
-    return load_model_by_name(best_key)
+        raise FileNotFoundError("No model checkpoints found.")
+    best_key = max(available, key=lambda key: available[key].get("score") or -1.0)
+    return load_model_by_name(best_key, domain=domain)
 
-# Detection Threshold
-THRESHOLD = 0.50
 
-def predict(model, image_path):
-    """Takes a path to an image and returns the prediction and confidence."""
-    image = Image.open(image_path).convert("RGB")
-    image_tensor = transform(image).unsqueeze(0).to(DEVICE)
-    
+def _predict_tensor(model, image_tensor):
     with torch.no_grad():
         output = model(image_tensor)
         probabilities = torch.softmax(output, dim=1)
-        # Class 1 is REAL, Class 0 is FAKE
-        real_prob = probabilities[0][1].item()
-        label = "REAL" if real_prob > THRESHOLD else "FAKE"
-        
+        return probabilities[0][1].item()
+
+
+def predict(model, image_path):
+    image = Image.open(image_path).convert("RGB")
+    image_tensor = transform(image).unsqueeze(0).to(DEVICE)
+    real_prob = _predict_tensor(model, image_tensor)
+    label = "REAL" if real_prob > THRESHOLD else "FAKE"
     return label, real_prob
 
+
 def predict_video(model, video_path, num_frames=20):
-    """Samples frames from a video and returns the average prediction."""
     cap = cv2.VideoCapture(video_path)
     if not cap.isOpened():
-        raise ValueError(f"❌ Could not open video: {video_path}")
+        raise ValueError(f"Could not open video: {video_path}")
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     if total_frames <= 0:
         cap.release()
-        raise ValueError(f"❌ Video has no frames: {video_path}")
+        raise ValueError(f"Video has no frames: {video_path}")
 
     indices = np.linspace(0, total_frames - 1, min(num_frames, total_frames), dtype=int)
     scores = []
-    
+
     for idx in indices:
         cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
         ret, frame = cap.read()
-        if not ret: continue
-            
+        if not ret:
+            continue
+
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         image = Image.fromarray(frame)
         image_tensor = transform(image).unsqueeze(0).to(DEVICE)
-        
-        with torch.no_grad():
-            output = model(image_tensor)
-            probabilities = torch.softmax(output, dim=1)
-            scores.append(probabilities[0][1].item())
-            
+        scores.append(_predict_tensor(model, image_tensor))
+
     cap.release()
     if not scores:
-        raise ValueError("❌ No frames could be read.")
-        
+        raise ValueError("No frames could be read.")
+
     avg_real_prob = sum(scores) / len(scores)
     label = "REAL" if avg_real_prob > THRESHOLD else "FAKE"
     return label, avg_real_prob
@@ -383,30 +430,91 @@ def get_db():
 
 ----------------------------------------
 
+--- FILE: inference_worker.py ---
+PATH: .\backend\inference_worker.py
+----------------------------------------
+import argparse
+import gc
+import json
+import sys
+
+import torch
+
+from core import load_model_by_name, predict, predict_video
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Run one isolated inference job.")
+    parser.add_argument("--model-key", required=True)
+    parser.add_argument("--domain", required=True, choices=["image", "video"])
+    parser.add_argument("--path", required=True)
+    parser.add_argument("--is-video", action="store_true")
+    args = parser.parse_args()
+
+    if torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+
+    model, config = load_model_by_name(args.model_key, domain=args.domain)
+    if args.is_video:
+        label, score = predict_video(model, args.path, num_frames=config.get("seq_len", 20))
+    else:
+        label, score = predict(model, args.path)
+
+    confidence = score if label == "REAL" else (1 - score)
+    vram_peak = torch.cuda.max_memory_allocated() / (1024**2) if torch.cuda.is_available() else 0
+
+    payload = {
+        "label": label,
+        "score": score,
+        "confidence": f"{confidence:.2%}",
+        "vram_peak": f"{vram_peak:.2f} MB",
+        "model_label": config.get("label", args.model_key),
+    }
+
+    del model
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+    print(json.dumps(payload), flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"error": str(exc)}), file=sys.stderr, flush=True)
+        raise
+
+----------------------------------------
+
 --- FILE: main.py ---
 PATH: .\backend\main.py
 ----------------------------------------
 import os
 import time
-import shutil
 import logging
 import uuid
 import threading
+import json
+import subprocess
+import sys
 from datetime import datetime, timedelta
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, status, Form
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-# Load environment variables from .env
 load_dotenv()
 
-import torch
-from core import get_available_models, load_model_by_name, predict, predict_video
+from model_catalog import MODEL_LOADER_VERSION, get_public_models, resolve_model_key
 import models
 import auth
 import database
 import payments
+from validator import validate_file
 
 # --- CONFIGURATION ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -417,11 +525,14 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 AUTO_PURGE_AFTER = 60 * 10 
 IDLE_TIMEOUT = 60 * 5      
 ADMIN_EMAILS = ["ansonsaju007@gmail.com"]
+MIN_VRAM_MB = 1024
+INFERENCE_WORKER = os.path.join(BASE_DIR, "inference_worker.py")
 
 app = FastAPI(title="DF-ENGINE | Neural Inference API")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DF-CLUSTER")
+logger.info(f"MODEL_LOADER: {MODEL_LOADER_VERSION}")
 
 app.add_middleware(
     CORSMiddleware,
@@ -434,40 +545,126 @@ app.add_middleware(
 # Initialize DB
 models.Base.metadata.create_all(bind=database.engine)
 
-# --- GLOBAL STATE ---
-loaded_models = {}
-model_last_used = {}
+# --- GLOBAL QUEUE STRUCTURES ---
+job_queue = []
+job_status = {}  # job_id -> status
+job_results = {} # job_id -> result or config
+
+queue_lock = threading.Lock()
+
 last_activity = time.time()
 
-def get_model(model_name: str):
-    global last_activity
-    if model_name not in loaded_models:
-        model, _ = load_model_by_name(model_name)
-        loaded_models[model_name] = model
-    model_last_used[model_name] = time.time()
-    last_activity = time.time()
-    return loaded_models[model_name]
+# --- GPU VRAM CHECK ---
+def get_gpu_info():
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.free,memory.used",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=True,
+        )
+        name, free_mb, used_mb = [part.strip() for part in result.stdout.splitlines()[0].split(",")]
+        return {"name": name, "free_mb": float(free_mb), "used_mb": float(used_mb)}
+    except Exception:
+        return {"name": "CPU", "free_mb": None, "used_mb": 0.0}
 
-def get_gpu_peak_mb():
-    if torch.cuda.is_available():
-        peak = torch.cuda.max_memory_allocated() / (1024**2)
-        torch.cuda.reset_peak_memory_stats()
-        return peak
-    return 0
+def check_vram():
+    gpu = get_gpu_info()
+    if gpu["free_mb"] is not None and gpu["free_mb"] < MIN_VRAM_MB:
+        raise HTTPException(status_code=503, detail=f"Insufficient GPU memory ({gpu['free_mb']:.0f}MB free)")
 
-# --- BACKGROUND CLEANUP ---
+def run_isolated_inference(info):
+    cmd = [
+        sys.executable,
+        INFERENCE_WORKER,
+        "--model-key",
+        info["model_used"],
+        "--domain",
+        info["domain"],
+        "--path",
+        info["path"],
+    ]
+    if info["is_video"]:
+        cmd.append("--is-video")
+
+    result = subprocess.run(
+        cmd,
+        cwd=BASE_DIR,
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"Inference worker exited with {result.returncode}"
+        raise RuntimeError(detail)
+    return json.loads(result.stdout.strip().splitlines()[-1])
+
+# --- BACKGROUND WORKER ---
+def worker_loop():
+    while True:
+        job_id = None
+        with queue_lock:
+            if job_queue: job_id = job_queue.pop(0)
+        
+        if not job_id:
+            time.sleep(1)
+            continue
+
+        try:
+            job_status[job_id] = "processing"
+            info = job_results[job_id] # Temporarily contains path/config
+            
+            logger.info(f"⚡ [WORKER] Processing {job_id} ({info['filename']})")
+            
+            inference = run_isolated_inference(info)
+            
+            # Store final result
+            job_results[job_id] = {
+                "job_id": job_id,
+                "label": inference["label"],
+                "confidence": inference["confidence"],
+                "vram_peak": inference["vram_peak"],
+                "vram_reserved": "0.00 MB",
+                "model_used": info["model_used"],
+                "model_label": inference.get("model_label", info["model_used"]),
+                "domain": info["domain"],
+                "filename": info["filename"],
+                "timestamp": datetime.utcnow().isoformat()
+            }
+            job_status[job_id] = "done"
+            
+            # Cleanup storage
+            if os.path.exists(info["path"]): os.remove(info["path"])
+            logger.info(f"✅ [WORKER] {job_id} Complete.")
+
+        except Exception as e:
+            logger.error(f"❌ [WORKER] {job_id} Failed: {e}")
+            info = job_results.get(job_id, {})
+            job_results[job_id] = {
+                "job_id": job_id,
+                "error": str(e),
+                "model_used": info.get("model_used"),
+                "domain": info.get("domain"),
+                "filename": info.get("filename"),
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+            if info.get("path") and os.path.exists(info["path"]):
+                os.remove(info["path"])
+            job_status[job_id] = "failed"
+
+threading.Thread(target=worker_loop, daemon=True).start()
+
+# --- OTHER CLEANUP ---
 def cleanup_loop():
     global last_activity
     while True:
         time.sleep(30)
         now = time.time()
-        for m_name, last_used in list(model_last_used.items()):
-            if now - last_used > IDLE_TIMEOUT:
-                if m_name in loaded_models:
-                    logger.info(f"❄️  Offloading model {m_name}")
-                    del loaded_models[m_name]
-                    del model_last_used[m_name]
-                    if torch.cuda.is_available(): torch.cuda.empty_cache()
         if now - last_activity > AUTO_PURGE_AFTER:
             for f in os.listdir(UPLOAD_DIR):
                 try: os.remove(os.path.join(UPLOAD_DIR, f))
@@ -484,12 +681,11 @@ async def log_requests(request: Request, call_next):
     logger.info(f"📡 API QUERY: {request.method} {request.url.path} | Status: {response.status_code}")
     return response
 
-# --- AUTH ENDPOINTS ---
+# --- ENDPOINTS ---
 
 @app.post("/auth/dev-login")
 async def dev_login(email: str, db: Session = Depends(database.get_db)):
-    if email not in ADMIN_EMAILS:
-        raise HTTPException(status_code=403, detail="Only admins can use dev-login")
+    if email not in ADMIN_EMAILS: raise HTTPException(status_code=403)
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
         user = models.User(email=email, role="admin", credits_image_total=5, credits_video_total=3)
@@ -502,7 +698,7 @@ async def dev_login(email: str, db: Session = Depends(database.get_db)):
 @app.post("/auth/google")
 async def google_auth(token: str, db: Session = Depends(database.get_db)):
     user_info = auth.verify_google_token(token)
-    if not user_info: raise HTTPException(status_code=401, detail="Invalid Google Token")
+    if not user_info: raise HTTPException(status_code=401)
     email = user_info["email"]
     user = db.query(models.User).filter(models.User.email == email).first()
     if not user:
@@ -517,61 +713,92 @@ async def google_auth(token: str, db: Session = Depends(database.get_db)):
 @app.get("/users/me")
 async def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return {
-        "email": current_user.email,
-        "role": current_user.role,
+        "email": current_user.email, "role": current_user.role,
         "credits": {
-            "image": {"remaining": current_user.credits_image_total - current_user.credits_image_used},
-            "video": {"remaining": current_user.credits_video_total - current_user.credits_video_used}
+            "image": {"remaining": "Unlimited" if current_user.role == "admin" else current_user.credits_image_total - current_user.credits_image_used},
+            "video": {"remaining": "Unlimited" if current_user.role == "admin" else current_user.credits_video_total - current_user.credits_video_used}
         }
     }
 
-# --- SYSTEM & MODELS ---
 @app.get("/system/status")
 async def system_status():
-    return {"status": "online", "gpu": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU", "models_cached": list(loaded_models.keys())}
+    gpu = get_gpu_info()
+    return {
+        "status": "online",
+        "gpu": gpu["name"],
+        "models_cached": [],
+        "queue": len(job_queue),
+        "model_loader": MODEL_LOADER_VERSION,
+        "cache_models": False,
+        "vram_reserved": f"{gpu['used_mb']:.2f} MB",
+    }
 
 @app.get("/models")
 async def list_models():
-    models_data = get_available_models()
-    return [{"key": k, "score": v["score"], "model_name": v["model_name"]} for k, v in models_data.items()]
+    return {"models": get_public_models()}
+
+@app.post("/predict")
+async def run_prediction(model_name: str, file: UploadFile = File(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
+    # 1. Validation
+    meta = validate_file(file)
+    check_vram()
+    is_video = meta["is_video"]
+    domain = "video" if is_video else "image"
+
+    try:
+        resolved_model_name = resolve_model_key(model_name, domain)
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    # 2. Read upload content. Each request runs fresh inference.
+    content = await file.read()
+    await file.seek(0)
+
+    # 3. Credits
+    if current_user.role != "admin":
+        if is_video and current_user.credits_video_used >= current_user.credits_video_total: raise HTTPException(status_code=402, detail="No VIDEO credits")
+        if not is_video and current_user.credits_image_used >= current_user.credits_image_total: raise HTTPException(status_code=402, detail="No IMAGE credits")
+        if is_video: current_user.credits_video_used += 1
+        else: current_user.credits_image_used += 1
+        db.commit()
+
+    # 4. Enqueue
+    job_id = f"job_{uuid.uuid4().hex[:8]}"
+    path = os.path.join(UPLOAD_DIR, f"{job_id}{meta['extension']}")
+    with open(path, "wb") as buffer: buffer.write(content)
+
+    job_status[job_id] = "queued"
+    job_results[job_id] = {"model_used": resolved_model_name, "domain": domain, "path": path, "is_video": is_video, "filename": file.filename}
+    
+    with queue_lock:
+        job_queue.append(job_id)
+
+    return {"job_id": job_id, "status": "queued"}
+
+@app.get("/status/{job_id}")
+async def get_job_status(job_id: str):
+    if job_id not in job_status: raise HTTPException(status_code=404)
+    return {
+        "status": job_status[job_id],
+        "result": job_results[job_id] if job_status[job_id] == "done" else None,
+        "error": job_results[job_id] if job_status[job_id] == "failed" else None,
+    }
 
 # --- PAYMENTS ---
 @app.post("/payments/create-order")
-async def create_payment_order(
-    category: str, 
-    quantity: int, 
-    amount: float, # Trust the specific bundle amount from UI
-    current_user: models.User = Depends(auth.get_current_user), 
-    db: Session = Depends(database.get_db)
-):
+async def create_payment_order(category: str, quantity: int, amount: float, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
     try:
         order = payments.create_order(amount)
-        new_tx = models.Transaction(
-            user_id=current_user.id, 
-            razorpay_order_id=order['id'], 
-            amount=amount, 
-            category=category, 
-            credits_added=quantity, 
-            status="pending"
-        )
+        new_tx = models.Transaction(user_id=current_user.id, razorpay_order_id=order['id'], amount=amount, category=category, credits_added=quantity, status="pending")
         db.add(new_tx)
         db.commit()
         return order
     except Exception as e:
-        logger.error(f"Razorpay Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/payments/verify")
-async def verify_payment(
-    order_id: str = Form(...), 
-    payment_id: str = Form(...), 
-    signature: str = Form(...), 
-    current_user: models.User = Depends(auth.get_current_user), 
-    db: Session = Depends(database.get_db)
-):
-    # Simulator Bypass
+async def verify_payment(order_id: str = Form(...), payment_id: str = Form(...), signature: str = Form(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
     valid = (signature == "simulator_valid_sig") or payments.verify_payment(order_id, payment_id, signature)
-
     if valid:
         tx = db.query(models.Transaction).filter(models.Transaction.razorpay_order_id == order_id).first()
         if tx and tx.status == "pending":
@@ -584,35 +811,9 @@ async def verify_payment(
             return {"message": "Success"}
     raise HTTPException(status_code=400, detail="Payment verification failed")
 
-@app.post("/predict")
-async def run_prediction(model_name: str, file: UploadFile = File(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
-    file_extension = os.path.splitext(file.filename)[1].lower()
-    is_video = file_extension in ('.mp4', '.avi', '.mov', '.mkv')
-    if current_user.role != "admin":
-        if is_video and current_user.credits_video_used >= current_user.credits_video_total: raise HTTPException(status_code=402, detail="No VIDEO credits")
-        if not is_video and current_user.credits_image_used >= current_user.credits_image_total: raise HTTPException(status_code=402, detail="No IMAGE credits")
-
-    job_id = f"job_{uuid.uuid4().hex[:8]}"
-    input_path = os.path.join(UPLOAD_DIR, f"{job_id}{file_extension}")
-    with open(input_path, "wb") as buffer: shutil.copyfileobj(file.file, buffer)
-
-    try:
-        model = get_model(model_name)
-        label, score = predict_video(model, input_path) if is_video else predict(model, input_path)
-        confidence = score if label == "REAL" else (1 - score)
-        if current_user.role != "admin":
-            if is_video: current_user.credits_video_used += 1
-            else: current_user.credits_image_used += 1
-        new_job = models.Job(id=job_id, user_id=current_user.id, filename=file.filename, model_used=model_name, file_type="video" if is_video else "image", label=label, confidence=confidence, vram_peak=f"{get_gpu_peak_mb():.2f} MB", status="done")
-        db.add(new_job)
-        db.commit()
-        return {"job_id": job_id, "label": label, "confidence": f"{confidence:.2%}", "vram_peak": new_job.vram_peak, "model_used": model_name}
-    finally:
-        if os.path.exists(input_path): os.remove(input_path)
-
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=82, log_config=None)
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", "8000")), log_config=None)
 
 ----------------------------------------
 
@@ -677,6 +878,173 @@ class Transaction(Base):
 
 ----------------------------------------
 
+--- FILE: model_catalog.py ---
+PATH: .\backend\model_catalog.py
+----------------------------------------
+import json
+import os
+import re
+
+
+MODEL_LOADER_VERSION = "domain-discovery-v3-subprocess"
+
+
+def _slug(value):
+    return re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _read_json(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _score_from_filename(filename):
+    match = re.search(r"_f1-([0-9.]+)\.pth$", filename)
+    if not match:
+        return None
+    try:
+        return float(match.group(1))
+    except ValueError:
+        return None
+
+
+def _best_checkpoint(model_dir):
+    best = None
+    for filename in os.listdir(model_dir):
+        if not filename.startswith("best_") or not filename.endswith(".pth"):
+            continue
+        score = _score_from_filename(filename)
+        candidate = {
+            "path": os.path.join(model_dir, filename),
+            "filename": filename,
+            "score": score if score is not None else -1.0,
+        }
+        if best is None or candidate["score"] > best["score"]:
+            best = candidate
+    return best
+
+
+def _load_model_metadata(model_dir):
+    config = {}
+    summary = {}
+
+    for filename in os.listdir(model_dir):
+        path = os.path.join(model_dir, filename)
+        if filename.startswith("config_") and filename.endswith(".json"):
+            config = _read_json(path)
+        elif filename.startswith("final_summary_") and filename.endswith(".json"):
+            payload = _read_json(path)
+            metrics = payload.get("test_metrics", {})
+            current_score = metrics.get("f1", payload.get("best_val_f1", -1.0))
+            previous_metrics = summary.get("test_metrics", {})
+            previous_score = previous_metrics.get("f1", summary.get("best_val_f1", -1.0))
+            if not summary or current_score > previous_score:
+                summary = payload
+
+    return config, summary
+
+
+def _discover_domain_models(domain):
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    base_path = os.path.join(current_dir, "models", domain)
+    available = {}
+
+    if not os.path.isdir(base_path):
+        return available
+
+    for dirname in sorted(os.listdir(base_path)):
+        model_dir = os.path.join(base_path, dirname)
+        if not os.path.isdir(model_dir):
+            continue
+
+        checkpoint = _best_checkpoint(model_dir)
+        if not checkpoint:
+            continue
+
+        config, summary = _load_model_metadata(model_dir)
+        metrics = summary.get("test_metrics", {})
+        model_name = config.get("model_name") or summary.get("model_name")
+        if not model_name:
+            continue
+
+        family = config.get("family") or dirname.split("_", 1)[0]
+        mode = config.get("mode") or ("single" if domain == "video" else "image")
+        category = config.get("category") or domain
+        key = f"{domain}_{_slug(dirname)}"
+
+        available[key] = {
+            "key": key,
+            "domain": domain,
+            "label": f"{family} {model_name}".replace("_", " "),
+            "family": family,
+            "model_name": model_name,
+            "path": checkpoint["path"],
+            "checkpoint": checkpoint["filename"],
+            "score": metrics.get("f1", summary.get("best_val_f1", checkpoint["score"])),
+            "accuracy": metrics.get("acc", summary.get("best_val_acc")),
+            "mode": mode,
+            "category": category,
+            "seq_len": int(config.get("seq_len") or (8 if mode == "sequence" else 1)),
+            "experiment_no": summary.get("experiment_no") or config.get("experiment_no"),
+            "dataset_scope": summary.get("dataset_scope") or config.get("dataset_scope"),
+            "description": config.get("what_it_tests") or config.get("description") or "",
+        }
+
+    return available
+
+
+def get_available_models(domain=None):
+    available = {}
+    domains = [domain] if domain else ["image", "video"]
+    for item in domains:
+        available.update(_discover_domain_models(item))
+    return available
+
+
+def get_public_models():
+    models = get_available_models()
+    return [
+        {
+            "key": config["key"],
+            "domain": config["domain"],
+            "label": config["label"],
+            "family": config["family"],
+            "model_name": config["model_name"],
+            "score": config["score"],
+            "accuracy": config["accuracy"],
+            "mode": config["mode"],
+            "category": config["category"],
+            "seq_len": config["seq_len"],
+            "experiment_no": config["experiment_no"],
+            "dataset_scope": config["dataset_scope"],
+            "description": config["description"],
+        }
+        for config in sorted(models.values(), key=lambda item: (item["domain"], -(item["score"] or 0), item["label"]))
+    ]
+
+
+def resolve_model_key(model_key, domain):
+    available = get_available_models(domain)
+    if model_key in available:
+        return model_key
+
+    best_key = None
+    best_score = -1.0
+    for key, config in available.items():
+        score = config.get("score") or -1.0
+        if score > best_score:
+            best_key = key
+            best_score = score
+
+    if best_key:
+        return best_key
+    raise FileNotFoundError(f"No {domain} model checkpoints found.")
+
+----------------------------------------
+
 --- FILE: payments.py ---
 PATH: .\backend\payments.py
 ----------------------------------------
@@ -711,623 +1079,46 @@ def verify_payment(order_id: str, payment_id: str, signature: str):
 
 ----------------------------------------
 
---- FILE: web_tester.py ---
-PATH: .\backend\web_tester.py
+--- FILE: validator.py ---
+PATH: .\backend\validator.py
 ----------------------------------------
 import os
-import time
-import sys
-from fastapi.testclient import TestClient
-from main import app
+from fastapi import UploadFile, HTTPException
 
-client = TestClient(app)
-
-def print_divider(char="=", length=75):
-    print("\n" + char * length)
-
-def run_simulation():
-    print_divider("🚀")
-    print("DF-ENGINE CLUSTER SIMULATOR (AUTH + PAYMENT + INFERENCE)")
-    print_divider()
-
-    test_email = "ansonsaju007@gmail.com"
-
-    # 1. AUTHENTICATION (via Dev Bypass)
-    print("🔑 [STEP 1] AUTHENTICATION")
-    auth_res = client.post(f"/auth/dev-login?email={test_email}")
-    if auth_res.status_code != 200:
-        print(f"❌ AUTH FAILED: {auth_res.text}")
-        return
+def validate_file(file: UploadFile) -> dict:
+    # 1. Extension Check
+    ext = os.path.splitext(file.filename)[1].lower()
     
-    token = auth_res.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
-    print(f"✅ AUTH SUCCESSFUL | Session established for {test_email}")
-
-    # 2. PAYMENT SIMULATION
-    print("\n💳 [STEP 2] RAZORPAY PAYMENT SIMULATION")
-    for cat in ["image", "video"]:
-        qty = 10 if cat == "image" else 5
-        print(f"📡 Requesting {cat.upper()} credits order...")
-        order_res = client.post(f"/payments/create-order?category={cat}&quantity={qty}", headers=headers)
-        
-        if order_res.status_code == 200:
-            order = order_res.json()
-            print(f"✅ Order Created: {order['id']} | Amount: ₹{order['amount']/100}")
-            
-            # Simulate Webhook/Frontend Verification
-            print(f"📡 Simulating Razorpay success callback...")
-            verify_res = client.post("/payments/verify", 
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Content-Type": "application/x-www-form-urlencoded"
-                },
-                data={
-                    "order_id": order["id"],
-                    "payment_id": f"pay_sim_{int(time.time())}",
-                    "signature": "simulator_valid_sig" # Note: Backend payments.verify_payment will need a bypass for this
-                }
-            )
-            print(f"✨ Payment Status: {verify_res.json().get('message', 'Processed')}")
-        else:
-            print(f"❌ Order Failed: {order_res.text}")
-
-    # 3. PROFILE VERIFICATION
-    print("\n📊 [STEP 3] NODE TELEMETRY")
-    user_res = client.get("/users/me", headers=headers)
-    u = user_res.json()
-    print(f"✅ Admin: {u['email']} | Role: {u['role'].upper()}")
-    print(f"📈 Credit Pool: IMG: {u['credits']['image']['remaining']} | VID: {u['credits']['video']['remaining']}")
-
-    # 4. BATCH INFERENCE
-    print("\n⚡ [STEP 4] NEURAL INFERENCE BATCH")
-    samples_dir = "backend/samples"
-    if not os.path.exists(samples_dir): samples_dir = "samples"
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.webp'}
+    VIDEO_EXTS = {'.mp4', '.avi', '.mov', '.mkv'}
     
-    sample_files = [f for f in os.listdir(samples_dir) if f.lower().endswith(('.jpg', '.png', '.mp4'))][:5] # Limit to 5 for quick check
+    is_video = ext in VIDEO_EXTS
+    is_image = ext in IMAGE_EXTS
     
-    print(f"{'File':<20} | {'Type':<6} | {'Result'}")
-    print("-" * 50)
-
-    for filename in sample_files:
-        file_path = os.path.join(samples_dir, filename)
-        is_video = filename.lower().endswith(('.mp4', '.avi', '.mov', '.mkv'))
-        
-        with open(file_path, "rb") as f:
-            files = {"file": (filename, f, "application/octet-stream")}
-            response = client.post("/predict?model_name=convnext", files=files, headers=headers)
-            
-            if response.status_code == 200:
-                res = response.json()
-                print(f"{filename:<20} | {'VIDEO' if is_video else 'IMAGE':<6} | {res['label']} ({res['confidence']})")
-            else:
-                print(f"{filename:<20} | ERROR {response.status_code}")
-
-    print_divider("📊")
-    print("SIMULATION COMPLETE")
-    print_divider()
-
-if __name__ == "__main__":
-    run_simulation()
-
-----------------------------------------
-
---- FILE: base_evaluator.py ---
-PATH: .\backend\models\image_models\base_evaluator.py
-----------------------------------------
-import os
-import torch
-import timm
-from tqdm import tqdm
-from sklearn.metrics import (
-    accuracy_score,
-    precision_score,
-    recall_score,
-    f1_score,
-    confusion_matrix,
-    roc_auc_score
-)
-
-from data.dataloader import DatasetBuilder
-
-# ================= DEVICE =================
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-def load_model(model_name, checkpoint_path):
-    print(f"📂 Loading model: {model_name}")
-    print(f"📍 From checkpoint: {checkpoint_path}")
-    
-    model = timm.create_model(
-        model_name,
-        pretrained=False,
-        num_classes=2
-    )
-
-    if not os.path.exists(checkpoint_path):
-        raise FileNotFoundError(f"❌ Checkpoint not found at {checkpoint_path}")
-
-    model.load_state_dict(torch.load(checkpoint_path, map_location=DEVICE))
-    model = model.to(DEVICE)
-    model.eval()
-
-    return model
-
-def run_evaluation(model_name, checkpoint_path, batch_size=32):
-    model = load_model(model_name, checkpoint_path)
-    
-    print("\n📦 Loading CelebDF Test Set...")
-    builder = DatasetBuilder(root="datasets")
-    
-    # get_loaders already separates CelebDF as the third (test) loader
-    _, _, test_loader = builder.get_loaders(
-        batch_size=batch_size,
-        mode="single",
-        dtype="image"
-    )
-
-    all_preds = []
-    all_labels = []
-    all_probs = []
-
-    print(f"🚀 Evaluating {model_name}...")
-    with torch.no_grad():
-        for images, labels in tqdm(test_loader):
-            images = images.to(DEVICE)
-
-            outputs = model(images)
-
-            probs = torch.softmax(outputs, dim=1)[:, 1]
-            preds = torch.argmax(outputs, dim=1)
-
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.numpy())
-            all_probs.extend(probs.cpu().numpy())
-
-    # ================= METRICS =================
-    acc = accuracy_score(all_labels, all_preds)
-    prec = precision_score(all_labels, all_preds)
-    rec = recall_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds)
-    cm = confusion_matrix(all_labels, all_preds)
-    roc = roc_auc_score(all_labels, all_probs)
-
-    print("\n" + "="*30)
-    print(f"📊 CELEBDF EVALUATION: {model_name}")
-    print("="*30)
-    print(f"Accuracy : {acc:.4f}")
-    print(f"Precision: {prec:.4f}")
-    print(f"Recall   : {rec:.4f}")
-    print(f"F1 Score : {f1:.4f}")
-    print(f"ROC-AUC  : {roc:.4f}")
-
-    print("\nConfusion Matrix:")
-    print(cm)
-    print("="*30)
-
-    return f1
-
-----------------------------------------
-
---- FILE: base_trainer.py ---
-PATH: .\backend\models\image_models\base_trainer.py
-----------------------------------------
-import os
-import time
-import random
-import logging
-import copy
-import numpy as np
-
-import torch
-import torch.nn as nn
-import timm
-
-from tqdm import tqdm
-from sklearn.metrics import f1_score, accuracy_score
-from torch.amp import autocast, GradScaler
-from PIL import Image
-
-Image.MAX_IMAGE_PIXELS = None
-
-from data.dataloader import DatasetBuilder
-
-# ================= DEVICE =================
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-# ================= SEED =================
-def set_seed(seed=42):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-# ================= LOGGER =================
-def setup_logger(save_dir):
-    log_path = os.path.join(save_dir, "train.log")
-
-    logger = logging.getLogger(save_dir)
-    logger.setLevel(logging.INFO)
-    logger.handlers.clear()
-
-    formatter = logging.Formatter(
-        "%(asctime)s | %(levelname)s | %(message)s"
-    )
-
-    fh = logging.FileHandler(log_path)
-    fh.setFormatter(formatter)
-
-    ch = logging.StreamHandler()
-    ch.setFormatter(formatter)
-
-    logger.addHandler(fh)
-    logger.addHandler(ch)
-
-    return logger
-
-
-# ================= EMA =================
-class EMA:
-    def __init__(self, model, decay):
-        self.ema = copy.deepcopy(model).eval()
-        self.decay = decay
-
-    def update(self, model):
-        with torch.no_grad():
-            for ema_p, model_p in zip(self.ema.parameters(), model.parameters()):
-                ema_p.data.mul_(self.decay).add_(model_p.data, alpha=1 - self.decay)
-
-
-# ================= WARMUP =================
-def adjust_lr_warmup(optimizer, epoch, config):
-    if epoch < config["warmup_epochs"]:
-        scale = float(epoch + 1) / config["warmup_epochs"]
-        for param_group in optimizer.param_groups:
-            param_group["lr"] = config["initial_lr"] * scale
-
-
-# ================= TRAIN =================
-def train_one_epoch(model, loader, optimizer, scaler, criterion, ema, config):
-
-    model.train()
-    total_loss = 0
-    all_preds, all_labels = [], []
-
-    pbar = tqdm(loader)
-
-    for images, labels in pbar:
-        images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-        optimizer.zero_grad()
-
-        with autocast(device_type="cuda"):
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-
-        scaler.scale(loss).backward()
-
-        scaler.unscale_(optimizer)
-        torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
-
-        scaler.step(optimizer)
-        scaler.update()
-
-        ema.update(model)
-
-        total_loss += loss.item()
-
-        preds = torch.argmax(outputs, dim=1)
-        all_preds.extend(preds.detach().cpu().numpy())
-        all_labels.extend(labels.detach().cpu().numpy())
-
-        pbar.set_description(f"Loss: {loss.item():.4f}")
-
-    return (
-        total_loss / len(loader),
-        f1_score(all_labels, all_preds),
-        accuracy_score(all_labels, all_preds),
-    )
-
-
-# ================= VALIDATE =================
-def validate(model, loader, criterion):
-
-    model.eval()
-    total_loss = 0
-    all_preds, all_labels = [], []
-
-    with torch.no_grad():
-        for images, labels in tqdm(loader):
-            images, labels = images.to(DEVICE), labels.to(DEVICE)
-
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-
-            total_loss += loss.item()
-
-            preds = torch.argmax(outputs, dim=1)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-    return (
-        total_loss / len(loader),
-        f1_score(all_labels, all_preds),
-        accuracy_score(all_labels, all_preds),
-    )
-
-
-# ================= MAIN =================
-def run_training(config):
-
-    set_seed(42)
-
-    os.makedirs(config["save_dir"], exist_ok=True)
-    logger = setup_logger(config["save_dir"])
-
-    logger.info(f"🚀 Training started: {config['model_name']}")
-
-    # ================= DATA =================
-    builder = DatasetBuilder(root="datasets")
-    train_loader, val_loader, _ = builder.get_loaders(
-        batch_size=config["batch_size"],
-        mode="single",
-        dtype="image" # 🔥 CLEAN FILTER
-    )
-
-    # ================= MODEL =================
-    model = timm.create_model(
-        config["model_name"],
-        pretrained=True,
-        num_classes=2
-    ).to(DEVICE)
-
-    # ================= LR =================
-    base_lr = config["base_lr"] * (config["batch_size"] / 64)
-    config["initial_lr"] = base_lr
-
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=base_lr,
-        weight_decay=config["weight_decay"]
-    )
-
-    # 🔥 Smooth fluctuating LR: Starts at base_lr, decays to min_lr in a wave
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-        optimizer, 
-        T_max=config["epochs"], 
-        eta_min=config["min_lr"]
-    )
-
-    # ================= LOSS =================
-    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-
-    scaler = GradScaler(device="cuda")
-    ema = EMA(model, config["ema_decay"])
-
-    best_f1 = 0
-    patience_counter = 0
-
-    # ================= TRAIN LOOP =================
-    for epoch in range(config["epochs"]):
-
-        start_time = time.time()
-
-        logger.info(f"\n===== EPOCH {epoch+1}/{config['epochs']} =====")
-
-        adjust_lr_warmup(optimizer, epoch, config)
-
-        train_loss, train_f1, _ = train_one_epoch(
-            model, train_loader, optimizer, scaler, criterion, ema, config
+    if not is_video and not is_image:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type: {ext}. Allowed: JPG, PNG, WEBP, MP4, AVI, MOV, MKV"
         )
 
-        val_loss, val_f1, _ = validate(ema.ema, val_loader, criterion)
-
-        scheduler.step()
-
-        current_lr = optimizer.param_groups[0]['lr']
-        epoch_time = time.time() - start_time
-
-        logger.info(
-            f"LR: {current_lr:.6f} | "
-            f"Train Loss: {train_loss:.4f} | Train F1: {train_f1:.4f} | "
-            f"Val Loss: {val_loss:.4f} | Val F1: {val_f1:.4f} | "
-            f"Time: {epoch_time:.2f}s"
+    # 2. Size Check (Image 10MB, Video 50MB)
+    MAX_IMAGE = int(os.getenv("MAX_IMAGE_MB", 10)) * 1024 * 1024
+    MAX_VIDEO = int(os.getenv("MAX_VIDEO_MB", 50)) * 1024 * 1024
+    limit = MAX_VIDEO if is_video else MAX_IMAGE
+    
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    
+    if size > limit:
+        type_str = "Video" if is_video else "Image"
+        limit_mb = limit / (1024 * 1024)
+        raise HTTPException(
+            status_code=400, 
+            detail=f"{type_str} exceeds size limit of {limit_mb}MB"
         )
 
-        # ================= SAVE & EARLY STOP =================
-        if val_f1 > best_f1 + config["min_delta"]:
-            best_f1 = val_f1
-            patience_counter = 0
-
-            torch.save(
-                ema.ema.state_dict(),
-                os.path.join(config["save_dir"], f"best_{val_f1:.4f}.pth")
-            )
-
-            logger.info("✅ Model improved and saved")
-
-        else:
-            patience_counter += 1
-            logger.info(f"⚠️ No significant improvement ({patience_counter}/{config['patience']})")
-
-            if patience_counter >= config["patience"]:
-                logger.info("🛑 Early stopping triggered")
-                break
-
-    logger.info(f"🏁 Training complete | Best F1: {best_f1:.4f}")
-----------------------------------------
-
---- FILE: model_configs.py ---
-PATH: .\backend\models\image_models\model_configs.py
-----------------------------------------
-MODEL_CONFIGS = {
-    "vit": {
-        "model_name": "vit_base_patch16_224",
-        "batch_size": 128,
-        "epochs": 15,
-        "base_lr": 3e-4,
-        "weight_decay": 1e-4,
-        "grad_clip": 1.0,
-        "warmup_epochs": 1,
-        "min_lr": 1e-6,
-        "patience": 2,
-        "min_delta": 0.005,
-        "ema_decay": 0.95,
-        "save_dir": "train/image_models/vit/checkpoints",
-    },
-
-    "convnext": {
-        "model_name": "convnext_base",
-        "batch_size": 128,
-        "epochs": 20,
-        "base_lr": 1e-4,
-        "weight_decay": 1e-4,
-        "grad_clip": 1.0,
-        "warmup_epochs": 2,
-        "min_lr": 1e-6,
-        "patience": 2,
-        "min_delta": 0.005,
-        "ema_decay": 0.95,
-        "save_dir": "train/image_models/convnext/checkpoints",
-    },
-
-    # future ready
-    "efficientnet": {
-        "model_name": "tf_efficientnet_b4",
-        "batch_size": 64,
-        "epochs": 20,
-        "base_lr": 1e-4,
-        "weight_decay": 1e-5,
-        "grad_clip": 1.0,
-        "warmup_epochs": 2,
-        "min_lr": 1e-6,
-        "patience": 2,
-        "min_delta": 0.005,
-        "ema_decay": 0.95,
-        "save_dir": "train/image_models/efficientnet/checkpoints",
-    },
-
-    "resnet50": {
-        "model_name": "resnet50.a1_in1k",
-        "batch_size": 128,
-        "epochs": 15,
-        "base_lr": 3e-4,
-        "weight_decay": 1e-4,
-        "grad_clip": 1.0,
-        "warmup_epochs": 1,
-        "min_lr": 1e-6,
-        "patience": 2,
-        "min_delta": 0.005,
-        "ema_decay": 0.95,
-        "save_dir": "train/image_models/resnet50/checkpoints",
-    }
-    }
-----------------------------------------
-
---- FILE: run.py ---
-PATH: .\backend\models\image_models\run.py
-----------------------------------------
-from train.image_models.base_trainer import run_training
-from train.image_models.model_configs import MODEL_CONFIGS
-
-
-def show_menu():
-    print("\n🔥 Select Model to Train:\n")
-
-    keys = list(MODEL_CONFIGS.keys())
-
-    for i, key in enumerate(keys):
-        print(f"{i+1}. {key}")
-
-    choice = input("\nEnter choice: ")
-
-    try:
-        idx = int(choice) - 1
-        return keys[idx]
-    except:
-        print("❌ Invalid choice")
-        return None
-
-
-def main():
-    model_key = show_menu()
-
-    if model_key is None:
-        return
-
-    config = MODEL_CONFIGS[model_key]
-
-    print(f"\n🚀 Running training for: {model_key}")
-    print(f"Model: {config['model_name']}")
-    print(f"Saving to: {config['save_dir']}")
-    run_training(config)
-
-
-if __name__ == "__main__":
-    main()
-----------------------------------------
-
---- FILE: run_eval.py ---
-PATH: .\backend\models\image_models\run_eval.py
-----------------------------------------
-import os
-from train.image_models.base_evaluator import run_evaluation
-from train.image_models.model_configs import MODEL_CONFIGS
-
-def get_best_checkpoint(save_dir):
-    if not os.path.exists(save_dir):
-        return None
-    
-    files = [f for f in os.listdir(save_dir) if f.startswith("best_") and f.endswith(".pth")]
-    if not files:
-        return None
-    
-    # Sort by value in filename: best_0.9246.pth -> 0.9246
-    files.sort(key=lambda x: float(x.split("_")[1].replace(".pth", "")), reverse=True)
-    return os.path.join(save_dir, files[0])
-
-def show_menu():
-    print("\n🔥 Select Model to Evaluate:\n")
-    keys = list(MODEL_CONFIGS.keys())
-    for i, key in enumerate(keys):
-        print(f"{i+1}. {key}")
-    
-    choice = input("\nEnter choice: ")
-    try:
-        idx = int(choice) - 1
-        return keys[idx]
-    except:
-        print("❌ Invalid choice")
-        return None
-
-def main():
-    model_key = show_menu()
-    if model_key is None:
-        return
-
-    config = MODEL_CONFIGS[model_key]
-    checkpoint_path = get_best_checkpoint(config["save_dir"])
-    
-    if not checkpoint_path:
-        print(f"❌ No checkpoints found in {config['save_dir']}")
-        # Ask user for manual path
-        manual_path = input("Enter manual checkpoint path (or press enter to exit): ")
-        if not manual_path:
-            return
-        checkpoint_path = manual_path
-
-    print(f"\n🚀 Running evaluation for: {model_key}")
-    print(f"Model: {config['model_name']}")
-    print(f"Checkpoint: {checkpoint_path}")
-
-    run_evaluation(
-        model_name=config["model_name"],
-        checkpoint_path=checkpoint_path,
-        batch_size=config["batch_size"]
-    )
-
-if __name__ == "__main__":
-    main()
+    return {"is_video": is_video, "extension": ext}
 
 ----------------------------------------
 
@@ -1428,141 +1219,100 @@ PATH: .\backend\temp\web_tester.py
 ----------------------------------------
 import os
 import time
+import sys
 from fastapi.testclient import TestClient
 from main import app
 
 client = TestClient(app)
 
-def run_synchronous_simulation():
-    print("\n" + "="*60)
-    print("🚀 [INIT] DF-ENGINE SYNCHRONOUS BATCH SIMULATOR")
-    print("="*60)
+def print_divider(char="=", length=75):
+    print("\n" + char * length)
 
-    # 1. System Check
-    res = client.get("/system/status").json()
-    print(f"✅ Status: ONLINE | GPU: {res['gpu']}")
+def run_simulation():
+    print_divider("🚀")
+    print("DF-ENGINE CLUSTER SIMULATOR (ASYNC + HASHED CACHE)")
+    print_divider()
 
-    # 2. Process Samples
+    test_email = "ansonsaju007@gmail.com"
+
+    # 1. AUTHENTICATION
+    print("🔑 [STEP 1] AUTHENTICATION")
+    auth_res = client.post(f"/auth/dev-login?email={test_email}")
+    if auth_res.status_code != 200:
+        print(f"❌ AUTH FAILED: {auth_res.text}")
+        return
+    
+    token = auth_res.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+    print(f"✅ AUTH SUCCESSFUL")
+
+    # 2. SYSTEM STATUS
+    print("\n📊 [STEP 2] TELEMETRY")
+    status = client.get("/system/status").json()
+    print(f"✅ Status: ONLINE | GPU: {status['gpu']}")
+
+    # 3. BATCH INFERENCE (ASYNC)
+    print("\n⚡ [STEP 3] ASYNC NEURAL INFERENCE")
     samples_dir = "backend/samples"
     if not os.path.exists(samples_dir): samples_dir = "samples"
+    
     sample_files = [f for f in os.listdir(samples_dir) if f.lower().endswith(('.jpg', '.png', '.mp4'))]
-
-    print(f"📦 Found {len(sample_files)} samples. Starting sequential inference...")
-    print(f"{'File':<20} | {'Result':<10} | {'Conf':<10} | {'VRAM':<12} | {'Time'}")
-    print("-" * 75)
-
+    
+    jobs = []
+    print(f"📤 Submitting {len(sample_files)} samples to cluster queue...")
+    
     for filename in sample_files:
         file_path = os.path.join(samples_dir, filename)
         with open(file_path, "rb") as f:
             files = {"file": (filename, f, "application/octet-stream")}
-            
-            start_time = time.time()
-            response = client.post("/predict?model_name=convnext", files=files)
-            duration = time.time() - start_time
+            response = client.post("/predict?model_name=convnext", files=files, headers=headers)
             
             if response.status_code == 200:
-                res = response.json()
-                print(f"{filename:<20} | {res['label']:<10} | {res['confidence']:<10} | {res['vram_peak']:<12} | {duration:.2f}s")
+                data = response.json()
+                jobs.append({"id": data["job_id"], "file": filename, "done": False})
+                print(f"✅ Enqueued: {filename} -> {data['job_id']}")
             else:
-                print(f"{filename:<20} | ERROR      | ---        | ---")
+                print(f"❌ Rejected: {filename} ({response.status_code})")
 
-    print("="*60 + "\n")
+    # 4. POLLING LOOP
+    print("\n⏳ [STEP 4] CLUSTER POLLING")
+    completed = 0
+    while completed < len(jobs):
+        for job in jobs:
+            if job["done"]: continue
+            
+            res = client.get(f"/status/{job['id']}").json()
+            if res["status"] == "done":
+                job["done"] = True
+                completed += 1
+                result = res["result"]
+                print(f"✨ RESULT [{job['file']}]: {result['label']} ({result['confidence']}) | VRAM: {result['vram_peak']}")
+            elif res["status"] == "failed":
+                job["done"] = True
+                completed += 1
+                print(f"❌ FAILED [{job['file']}]")
+        
+        if completed < len(jobs):
+            time.sleep(1)
+
+    print_divider("📊")
+    print("SIMULATION COMPLETE")
+    print_divider()
 
 if __name__ == "__main__":
-    run_synchronous_simulation()
-
-----------------------------------------
-
---- FILE: eslint.config.js ---
-PATH: .\deep-fake-app\eslint.config.js
-----------------------------------------
-import js from '@eslint/js'
-import globals from 'globals'
-import reactHooks from 'eslint-plugin-react-hooks'
-import reactRefresh from 'eslint-plugin-react-refresh'
-import { defineConfig, globalIgnores } from 'eslint/config'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
-    languageOptions: {
-      ecmaVersion: 2020,
-      globals: globals.browser,
-      parserOptions: {
-        ecmaVersion: 'latest',
-        ecmaFeatures: { jsx: true },
-        sourceType: 'module',
-      },
-    },
-    rules: {
-      'no-unused-vars': ['error', { varsIgnorePattern: '^[A-Z_]' }],
-    },
-  },
-])
-
-----------------------------------------
-
---- FILE: index.html ---
-PATH: .\deep-fake-app\index.html
-----------------------------------------
-<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>DF-ENGINE | AI Video Intelligence</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Sora:wght@400;600;700&display=swap" rel="stylesheet">
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-
-----------------------------------------
-
---- FILE: vite.config.js ---
-PATH: .\deep-fake-app\vite.config.js
-----------------------------------------
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-
-// https://vite.dev/config/
-export default defineConfig({
-  base: '/deepfake/',
-  plugins: [react(), tailwindcss()],
-  server: {
-    proxy: {
-      '/deepfake/api': {
-        target: 'http://127.0.0.1:82',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/deepfake\/api/, '')
-      }
-    }
-  }
-})
+    run_simulation()
 
 ----------------------------------------
 
 --- FILE: App.css ---
-PATH: .\deep-fake-app\src\App.css
+PATH: .\src\App.css
 ----------------------------------------
 /* Empty file as we're now using Tailwind CSS */
 
 ----------------------------------------
 
 --- FILE: App.jsx ---
-PATH: .\deep-fake-app\src\App.jsx
+PATH: .\src\App.jsx
 ----------------------------------------
 import React, { useState, useEffect } from 'react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
@@ -1576,12 +1326,25 @@ import { LiveDemo } from './components/LiveDemo'
 import { Pricing } from './components/Pricing'
 import { Footer } from './components/Footer'
 import { AuthModal } from './components/AuthModal'
+import { Research } from './components/Research'
 
 const GOOGLE_CLIENT_ID = "771999870087-il14aouajsabcfmmin80t1hbkl6dhvu6.apps.googleusercontent.com"
+
+const getAppRoute = (pathname) => {
+  const basePath = import.meta.env.BASE_URL.replace(/\/+$/, "");
+  const normalizedPath = pathname.replace(/\/+$/, "") || "/";
+
+  if (basePath && basePath !== "/" && normalizedPath.startsWith(basePath)) {
+    return normalizedPath.slice(basePath.length) || "/";
+  }
+
+  return normalizedPath;
+};
 
 function App() {
   const [user, setUser] = useState(null);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const isResearchRoute = getAppRoute(window.location.pathname) === "/research";
 
   const fetchUser = async () => {
     const token = localStorage.getItem("token");
@@ -1623,14 +1386,20 @@ function App() {
           onLogout={handleLogout} 
           onLoginClick={() => setIsAuthModalOpen(true)} 
         />
-        <Hero />
-        <Pipeline />
-        <Setup />
-        <Architecture />
-        <Benchmarks />
-        <LiveDemo user={user} onAuthRequired={() => setIsAuthModalOpen(true)} onUpdateUser={fetchUser} />
-        <Pricing user={user} onAuthRequired={() => setIsAuthModalOpen(true)} onUpdateUser={fetchUser} />
-        <Footer />
+        {isResearchRoute ? (
+          <Research />
+        ) : (
+          <>
+            <Hero />
+            <Pipeline />
+            <Setup />
+            <Architecture />
+            <Benchmarks />
+            <LiveDemo user={user} onAuthRequired={() => setIsAuthModalOpen(true)} onUpdateUser={fetchUser} />
+            <Pricing user={user} onAuthRequired={() => setIsAuthModalOpen(true)} onUpdateUser={fetchUser} />
+            <Footer />
+          </>
+        )}
         
         <AuthModal 
           isOpen={isAuthModalOpen} 
@@ -1647,7 +1416,7 @@ export default App
 ----------------------------------------
 
 --- FILE: index.css ---
-PATH: .\deep-fake-app\src\index.css
+PATH: .\src\index.css
 ----------------------------------------
 @import "tailwindcss";
 
@@ -1660,7 +1429,7 @@ body {
 ----------------------------------------
 
 --- FILE: main.jsx ---
-PATH: .\deep-fake-app\src\main.jsx
+PATH: .\src\main.jsx
 ----------------------------------------
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
@@ -1676,34 +1445,41 @@ createRoot(document.getElementById('root')).render(
 ----------------------------------------
 
 --- FILE: Architecture.jsx ---
-PATH: .\deep-fake-app\src\components\Architecture.jsx
+PATH: .\src\components\Architecture.jsx
 ----------------------------------------
 import React from 'react';
 import { motion } from 'framer-motion';
-import { Network, Eye, Layers, Fingerprint } from 'lucide-react';
+import { Eye, Film, Fingerprint, Image as ImageIcon, Layers, Network } from 'lucide-react';
 
 export const Architecture = () => {
   const models = [
     {
-      name: "ConvNext-Base",
-      type: "Modernized CNN",
-      detail: "Leverages depthwise convolutions and inverted bottlenecks to achieve state-of-the-art spatial feature extraction without the overhead of traditional transformers.",
-      metric: "0.982 F1",
+      name: "ConvNeXt-Base Image",
+      type: "Image Domain | image_combined",
+      detail: "Primary image detector for synthetic image benchmarks. Test accuracy reaches 98.63% with 0.9863 F1.",
+      metric: "98.63% ACC",
       icon: <Layers size={20} className="text-cyan-500" />
     },
     {
-      name: "ViT-B/16",
-      type: "Vision Transformer",
-      detail: "Applies global self-attention to pixel patches, identifying non-local inconsistencies and temporal artifacts that traditional CNNs might overlook.",
-      metric: "0.854 F1",
+      name: "Swin-Base Image",
+      type: "Image Domain | image_combined",
+      detail: "Hierarchical window attention baseline for image-only detection. Test accuracy reaches 98.42% with 0.9842 F1.",
+      metric: "98.42% ACC",
       icon: <Network size={20} className="text-blue-500" />
     },
     {
-      name: "ResNet-50",
-      type: "Residual Backbone",
-      detail: "Uses identity shortcut connections to mitigate gradient vanishing, providing a robust and stable baseline for localized boundary analysis.",
-      metric: "0.475 F1",
-      icon: <Shield size={20} className="text-indigo-500" />
+      name: "ConvNeXt Hybrid Video",
+      type: "Video Domain | spatiotemporal",
+      detail: "Raw-video route for Celeb-DF v2 and FaceForensics++ clips. Test accuracy reaches 90.89% with 0.7841 F1.",
+      metric: "90.89% ACC",
+      icon: <Film size={20} className="text-indigo-500" />
+    },
+    {
+      name: "ConvNeXt Sequence Video",
+      type: "Video Domain | temporal",
+      detail: "Temporal clip aggregation path with the same top video test profile: 90.89% accuracy and 0.7841 F1.",
+      metric: "90.89% ACC",
+      icon: <ImageIcon size={20} className="text-emerald-500" />
     }
   ];
 
@@ -1727,9 +1503,9 @@ export const Architecture = () => {
                 Multi-Architecture <br /> Inference Engine
               </h2>
               <p className="text-gray-500 font-Inter leading-relaxed max-w-xl">
-                DF-Engine doesn't rely on a single heuristic. We utilize a heterogeneous 
-                ensemble of vision models to cross-validate media integrity at both 
-                spatial and global scales.
+                DF-Engine now separates image and video inference by default. Static media is routed
+                to image-trained spatial models, while raw clips use video-trained temporal and
+                spatiotemporal routes.
               </p>
             </motion.div>
 
@@ -1764,7 +1540,7 @@ export const Architecture = () => {
             initial={{ opacity: 0, scale: 0.95 }}
             whileInView={{ opacity: 1, scale: 1 }}
             viewport={{ once: true }}
-            className="lg:w-5/12 relative"
+            className="relative lg:ml-auto lg:w-[38%] xl:translate-x-8"
           >
             <div className="absolute -inset-4 rounded-3xl bg-gradient-to-tr from-cyan-500/10 to-indigo-500/10 blur-3xl animate-pulse"></div>
             <div className="relative rounded-[2rem] border border-white bg-white/60 p-10 shadow-2xl backdrop-blur-xl overflow-hidden">
@@ -1817,8 +1593,8 @@ export const Architecture = () => {
                   <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Input Resolution</span>
                 </div>
                 <div>
-                  <span className="block text-2xl font-bold text-[#0A0A0A]">32-Bit</span>
-                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Precision Depth</span>
+                  <span className="block text-2xl font-bold text-[#0A0A0A]">FP32</span>
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Inference Precision</span>
                 </div>
               </div>
             </div>
@@ -1830,16 +1606,10 @@ export const Architecture = () => {
   );
 };
 
-const Shield = ({ size, className }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-  </svg>
-);
-
 ----------------------------------------
 
 --- FILE: AuthModal.jsx ---
-PATH: .\deep-fake-app\src\components\AuthModal.jsx
+PATH: .\src\components\AuthModal.jsx
 ----------------------------------------
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -1941,69 +1711,68 @@ export const AuthModal = ({ isOpen, onClose, onLoginSuccess }) => {
 ----------------------------------------
 
 --- FILE: Benchmarks.jsx ---
-PATH: .\deep-fake-app\src\components\Benchmarks.jsx
+PATH: .\src\components\Benchmarks.jsx
 ----------------------------------------
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { Table, Microscope, BarChart, Activity } from 'lucide-react';
+import { BarChart3, Medal, Microscope, Table } from 'lucide-react';
 
-const convnextData = [
-  { epoch: 1, trainF1: 0.9574, valF1: 0.9724, loss: 0.2688 },
-  { epoch: 2, trainF1: 0.9741, valF1: 0.9784, loss: 0.2439 },
-  { epoch: 3, trainF1: 0.9825, valF1: 0.9820, loss: 0.2294 },
-  { epoch: 5, trainF1: 0.9899, valF1: 0.9828, loss: 0.2170 },
-  { epoch: 10, trainF1: 0.9963, valF1: 0.9833, loss: 0.2051 },
-  { epoch: 15, trainF1: 0.9981, valF1: 0.9827, loss: 0.2019 },
-  { epoch: 20, trainF1: 0.9985, valF1: 0.9830, loss: 0.2012 },
-];
-
-const vitData = [
-  { epoch: 1, trainF1: 0.6895, valF1: 0.7574, loss: 0.5971 },
-  { epoch: 3, trainF1: 0.7924, valF1: 0.8146, loss: 0.4862 },
-  { epoch: 5, trainF1: 0.8182, valF1: 0.8378, loss: 0.4562 },
-  { epoch: 10, trainF1: 0.8353, valF1: 0.8434, loss: 0.4339 },
-  { epoch: 15, trainF1: 0.8486, valF1: 0.8551, loss: 0.4175 },
-];
-
-const stats = {
-  convnext: {
-    name: "ConvNeXt-Base",
-    bestF1: "0.9820",
-    celebDF: { acc: "0.5951", prec: "0.1913", rec: "0.6112", f1: "0.2915", auc: "0.6498" },
-    matrix: [[3344, 2299], [346, 544]]
+const benchmarkGroups = {
+  image: {
+    name: "Image Models",
+    scope: "image_combined",
+    summary: "Static-image benchmark family across CIFAKE and AI-generated image datasets.",
+    best: { label: "ConvNeXt-Base", acc: "98.63%", f1: "0.9863", loss: "0.2289", epoch: "8" },
+    rows: [
+      { model: "ConvNeXt-Base", experiment: "IMG-EXP-04", acc: "98.63%", f1: "0.9863", loss: "0.2289" },
+      { model: "Swin-Base", experiment: "IMG-EXP-07", acc: "98.42%", f1: "0.9842", loss: "0.2272" },
+      { model: "ConvNeXt-Large", experiment: "IMG-EXP-05", acc: "98.40%", f1: "0.9840", loss: "0.2286" },
+      { model: "ViT-Base", experiment: "IMG-EXP-01", acc: "97.03%", f1: "0.9702", loss: "0.2584" },
+    ],
   },
-  vit: {
-    name: "ViT-B/16",
-    bestF1: "0.8536",
-    celebDF: { acc: "0.5135", prec: "0.1138", rec: "0.3787", f1: "0.1750", auc: "0.4565" },
-    matrix: [[3018, 2625], [553, 337]]
-  }
+  video: {
+    name: "Video Models",
+    scope: "video_combined",
+    summary: "Raw-video benchmark family across Celeb-DF v2 and FaceForensics++ clips.",
+    best: { label: "ConvNeXt Hybrid/Sequence Large", acc: "90.89%", f1: "0.7841", loss: "0.3986", epoch: "10" },
+    rows: [
+      { model: "ConvNeXt Hybrid Large", experiment: "VID-ST-03", acc: "90.89%", f1: "0.7841", loss: "0.3986" },
+      { model: "ConvNeXt Sequence Large", experiment: "VID-TMP-02", acc: "90.89%", f1: "0.7841", loss: "0.3986" },
+      { model: "ConvNeXt Sequence Base", experiment: "VID-TMP-01", acc: "88.32%", f1: "0.7099", loss: "0.4553" },
+      { model: "ConvNeXt Spatial Base", experiment: "VID-SPA-02", acc: "85.66%", f1: "0.7023", loss: "0.4639" },
+    ],
+  },
 };
 
+const metricCards = (active) => [
+  { label: "Best Accuracy", value: active.best.acc },
+  { label: "Best F1", value: active.best.f1 },
+  { label: "Best Epoch", value: active.best.epoch },
+];
+
 export const Benchmarks = () => {
-  const [activeTab, setActiveTab] = useState('convnext');
+  const [activeTab, setActiveTab] = useState('image');
+  const active = benchmarkGroups[activeTab];
 
   return (
     <section id="benchmarks" className="bg-white py-32 px-6 overflow-hidden">
       <div className="mx-auto max-w-7xl">
         <div className="mb-16 text-center space-y-4">
-          <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1 text-[10px] font-bold text-blue-600 uppercase tracking-widest">
+          <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-4 py-1.5 text-xs font-bold text-blue-600 uppercase tracking-widest">
             Experimental Results
           </div>
           <h2 className="font-Sora text-4xl font-bold tracking-tight text-[#0A0A0A] md:text-5xl">
             Technical Benchmarks
           </h2>
           <p className="text-gray-500 max-w-2xl mx-auto font-Inter">
-            Empirical validation of model performance across native validation sets and 
-            unseen cross-dataset (Celeb-DF) challenges.
+            Current test-set performance from the active image and video model directories,
+            separated by benchmark domain instead of pooled into one score.
           </p>
         </div>
 
-        {/* Tab Switcher */}
         <div className="flex justify-center mb-12">
           <div className="flex p-1 bg-gray-100 rounded-2xl w-full max-w-md">
-            {Object.keys(stats).map((tab) => (
+            {Object.keys(benchmarkGroups).map((tab) => (
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
@@ -2011,7 +1780,7 @@ export const Benchmarks = () => {
                   activeTab === tab ? "bg-white text-[#0A0A0A] shadow-sm" : "text-gray-400 hover:text-gray-600"
                 }`}
               >
-                {stats[tab].name}
+                {benchmarkGroups[tab].name}
               </button>
             ))}
           </div>
@@ -2026,76 +1795,88 @@ export const Benchmarks = () => {
             transition={{ duration: 0.4 }}
             className="grid gap-8 lg:grid-cols-12"
           >
-            {/* Left: Training Curve */}
             <div className="lg:col-span-8 rounded-[2rem] border border-gray-100 bg-gray-50/30 p-8">
-              <div className="flex items-center justify-between mb-8">
-                <h3 className="flex items-center gap-2 font-Sora font-bold text-[#0A0A0A]">
-                  <Activity size={18} className="text-cyan-500" /> Training Progress
-                </h3>
-                <span className="text-[10px] font-bold text-gray-400 uppercase">Best Val F1: {stats[activeTab].bestF1}</span>
+              <div className="mb-8 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+                <div>
+                  <h3 className="flex items-center gap-2 font-Sora text-2xl font-bold text-[#0A0A0A]">
+                    <BarChart3 size={20} className="text-cyan-500" /> {active.name}
+                  </h3>
+                  <p className="mt-2 max-w-xl text-sm leading-7 text-gray-500">{active.summary}</p>
+                </div>
+                <span className="rounded-full bg-white px-4 py-2 font-mono text-xs font-bold uppercase tracking-widest text-cyan-600 shadow-sm">
+                  {active.scope}
+                </span>
               </div>
-              <div className="h-[350px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={activeTab === 'convnext' ? convnextData : vitData}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7eb" />
-                    <XAxis dataKey="epoch" fontSize={10} fontWeight="bold" tickMargin={10} />
-                    <YAxis fontSize={10} fontWeight="bold" domain={[0, 1]} />
-                    <Tooltip 
-                      contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                    />
-                    <Legend />
-                    <Line type="monotone" dataKey="valF1" name="Validation F1" stroke="#06b6d4" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                    <Line type="monotone" dataKey="trainF1" name="Train F1" stroke="#3b82f6" strokeWidth={2} strokeDasharray="5 5" dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
+
+              <div className="grid gap-4 md:grid-cols-3">
+                {metricCards(active).map((metric) => (
+                  <div key={metric.label} className="rounded-2xl border border-white bg-white/80 p-5 shadow-sm">
+                    <div className="text-[10px] font-black uppercase tracking-widest text-gray-400">{metric.label}</div>
+                    <div className="mt-2 font-Sora text-3xl font-bold tracking-tight text-[#0A0A0A]">{metric.value}</div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="mt-8 overflow-hidden rounded-2xl border border-gray-100 bg-white">
+                <div className="flex items-center gap-2 border-b border-gray-100 px-5 py-4 text-xs font-black uppercase tracking-widest text-gray-400">
+                  <Table size={15} /> Ranked Runs
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[680px] text-left text-sm">
+                    <thead className="bg-gray-50 text-[10px] uppercase tracking-widest text-gray-500">
+                      <tr>
+                        <th className="px-5 py-3 font-black">Model</th>
+                        <th className="px-5 py-3 font-black">Experiment</th>
+                        <th className="px-5 py-3 font-black">Accuracy</th>
+                        <th className="px-5 py-3 font-black">F1</th>
+                        <th className="px-5 py-3 font-black">Loss</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {active.rows.map((row) => (
+                        <tr key={row.experiment} className="border-t border-gray-50">
+                          <td className="px-5 py-4 font-bold text-[#0A0A0A]">{row.model}</td>
+                          <td className="px-5 py-4 font-mono text-xs text-gray-500">{row.experiment}</td>
+                          <td className="px-5 py-4 font-mono font-bold text-cyan-600">{row.acc}</td>
+                          <td className="px-5 py-4 font-mono text-gray-700">{row.f1}</td>
+                          <td className="px-5 py-4 font-mono text-gray-500">{row.loss}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
 
-            {/* Right: CelebDF & Confusion Matrix */}
             <div className="lg:col-span-4 space-y-8">
               <div className="rounded-[2rem] border border-gray-100 bg-white p-8 shadow-xl">
-                <h3 className="flex items-center gap-2 font-Sora font-bold text-[#0A0A0A] mb-6">
-                  <Microscope size={18} className="text-blue-500" /> Celeb-DF Eval
+                <h3 className="mb-6 flex items-center gap-2 font-Sora font-bold text-[#0A0A0A]">
+                  <Medal size={18} className="text-blue-500" /> Best Run
                 </h3>
                 <div className="space-y-4">
                   {[
-                    { label: "Accuracy", val: stats[activeTab].celebDF.acc },
-                    { label: "F1 Score", val: stats[activeTab].celebDF.f1 },
-                    { label: "ROC-AUC", val: stats[activeTab].celebDF.auc },
-                  ].map((m, i) => (
-                    <div key={i} className="flex justify-between items-end border-b border-gray-50 pb-2">
-                      <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">{m.label}</span>
-                      <span className="font-mono text-sm font-bold text-[#0A0A0A]">{m.val}</span>
+                    { label: "Model", val: active.best.label },
+                    { label: "Accuracy", val: active.best.acc },
+                    { label: "F1 Score", val: active.best.f1 },
+                    { label: "Loss", val: active.best.loss },
+                  ].map((m) => (
+                    <div key={m.label} className="flex justify-between gap-4 border-b border-gray-50 pb-2">
+                      <span className="text-xs font-bold text-gray-400 uppercase tracking-widest">{m.label}</span>
+                      <span className="text-right font-mono text-sm font-bold text-[#0A0A0A]">{m.val}</span>
                     </div>
                   ))}
                 </div>
-                <p className="mt-6 text-[10px] leading-relaxed text-gray-400 italic">
-                  *Cross-dataset evaluation represents zero-shot performance on unseen lighting and compression domains.
-                </p>
               </div>
 
               <div className="rounded-[2rem] border border-gray-100 bg-[#0A0A0A] p-8 text-white">
-                <h3 className="flex items-center gap-2 font-Sora font-bold mb-6 text-sm uppercase tracking-widest">
-                  Confusion Matrix
+                <h3 className="mb-5 flex items-center gap-2 font-Sora text-sm font-bold uppercase tracking-widest">
+                  <Microscope size={16} className="text-cyan-400" /> Evaluation Scope
                 </h3>
-                <div className="grid grid-cols-2 gap-2 text-center font-mono">
-                  <div className="bg-white/5 p-4 rounded-xl">
-                    <span className="block text-xs text-gray-500 mb-1">TN</span>
-                    <span className="text-lg font-bold">{stats[activeTab].matrix[0][0]}</span>
-                  </div>
-                  <div className="bg-cyan-500/10 p-4 rounded-xl text-cyan-400">
-                    <span className="block text-xs text-cyan-500/50 mb-1">FP</span>
-                    <span className="text-lg font-bold">{stats[activeTab].matrix[0][1]}</span>
-                  </div>
-                  <div className="bg-red-500/10 p-4 rounded-xl text-red-400">
-                    <span className="block text-xs text-red-500/50 mb-1">FN</span>
-                    <span className="text-lg font-bold">{stats[activeTab].matrix[1][0]}</span>
-                  </div>
-                  <div className="bg-white/5 p-4 rounded-xl">
-                    <span className="block text-xs text-gray-500 mb-1">TP</span>
-                    <span className="text-lg font-bold">{stats[activeTab].matrix[1][1]}</span>
-                  </div>
-                </div>
+                <p className="text-sm leading-7 text-gray-400">
+                  {activeTab === 'image'
+                    ? "Image scores come from the image_combined test protocol and should not be compared directly against video-only runs."
+                    : "Video scores come from raw-video experiments with identity-aware split policy across Celeb-DF v2 and FaceForensics++."}
+                </p>
               </div>
             </div>
           </motion.div>
@@ -2108,47 +1889,74 @@ export const Benchmarks = () => {
 ----------------------------------------
 
 --- FILE: Footer.jsx ---
-PATH: .\deep-fake-app\src\components\Footer.jsx
+PATH: .\src\components\Footer.jsx
 ----------------------------------------
+import logoIcon from '../../images/Logo/DF_Cropped_Logo_Icon.png';
+
+const resources = [
+  {
+    label: "GitHub Repository",
+    href: "https://github.com/Anson-Saju-George/Deepfake-Engine-Research",
+  },
+  {
+    label: "Dataset Archive",
+    href: "https://huggingface.co/datasets/Anson-Saju-George/deepfake_datasets",
+  },
+  {
+    label: "Model Weights",
+    href: "https://huggingface.co/Anson-Saju-George/deepfake-model-weights",
+  },
+];
+
 export const Footer = () => (
-  <footer className="border-t border-gray-100 bg-white py-20 px-6">
+  <footer className="border-t border-gray-100 bg-white px-6 py-16">
     <div className="mx-auto max-w-7xl">
-      <div className="flex flex-col justify-between gap-12 md:flex-row md:items-center">
+      <div className="flex flex-col justify-between gap-10 md:flex-row md:items-center">
         <div className="space-y-4">
-          <div className="flex items-center gap-2">
-            <div className="h-6 w-6 rounded-md bg-cyan-500"></div>
-            <span className="font- Sora text-lg font-bold tracking-tight text-[#0A0A0A]">DF-ENGINE</span>
+          <div className="flex items-center gap-3">
+            <img src={logoIcon} alt="DF-ENGINE" className="h-9 w-9 rounded-lg object-contain" />
+            <span className="font-Sora text-lg font-bold tracking-tight text-[#0A0A0A]">DF-ENGINE</span>
           </div>
-          <p className="max-w-xs text-sm text-gray-400">
-            Advanced GPU-backed inference system for motion-aware video analysis and temporal synthesis.
+          <p className="max-w-sm text-sm leading-6 text-gray-500">
+            Domain-aware deepfake inference for image and raw-video research workflows.
           </p>
         </div>
-        
-        <div className="flex flex-wrap gap-12 md:gap-24">
+
+        <div className="flex flex-wrap gap-12 md:gap-20">
           <div className="space-y-4">
             <h5 className="text-xs font-bold text-[#0A0A0A] uppercase tracking-widest">Platform</h5>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><a href="#pipeline" className="hover:text-cyan-500 transition-colors">Pipeline</a></li>
-              <li><a href="#architecture" className="hover:text-cyan-500 transition-colors">Architecture</a></li>
-              <li><a href="#demo" className="hover:text-cyan-500 transition-colors">Live Demo</a></li>
+              <li><a href="#pipeline" className="transition-colors hover:text-cyan-500">Pipeline</a></li>
+              <li><a href="#architecture" className="transition-colors hover:text-cyan-500">Architecture</a></li>
+              <li><a href="#benchmarks" className="transition-colors hover:text-cyan-500">Benchmarks</a></li>
+              <li><a href="#demo" className="transition-colors hover:text-cyan-500">Live Demo</a></li>
             </ul>
           </div>
           <div className="space-y-4">
-            <h5 className="text-xs font-bold text-[#0A0A0A] uppercase tracking-widest">Connect</h5>
+            <h5 className="text-xs font-bold text-[#0A0A0A] uppercase tracking-widest">Resources</h5>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><a href="#" className="hover:text-cyan-500 transition-colors">GitHub Repository</a></li>
-              <li><a href="#" className="hover:text-cyan-500 transition-colors">Research Paper</a></li>
-              <li><a href="#" className="hover:text-cyan-500 transition-colors">API Documentation</a></li>
+              {resources.map((resource) => (
+                <li key={resource.href}>
+                  <a
+                    href={resource.href}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="transition-colors hover:text-cyan-500"
+                  >
+                    {resource.label}
+                  </a>
+                </li>
+              ))}
             </ul>
           </div>
         </div>
       </div>
-      
-      <div className="mt-20 flex flex-col justify-between border-t border-gray-50 pt-10 md:flex-row md:items-center text-[10px] font-bold text-gray-300 uppercase tracking-[2px]">
-        <p>© 2026 DF-ENGINE CLUSTER • ALL RIGHTS RESERVED</p>
-        <div className="flex gap-8 mt-4 md:mt-0">
-          <a href="#" className="hover:text-gray-400 transition-colors">Terms of Service</a>
-          <a href="#" className="hover:text-gray-400 transition-colors">Privacy Policy</a>
+
+      <div className="mt-14 flex flex-col justify-between border-t border-gray-100 pt-8 text-[10px] font-bold uppercase tracking-[2px] text-gray-400 md:flex-row md:items-center">
+        <p>Copyright 2026 DF-ENGINE Cluster. All rights reserved.</p>
+        <div className="mt-4 flex gap-8 md:mt-0">
+          <a href="#pricing" className="transition-colors hover:text-gray-600">Acquire Credits</a>
+          <a href="/deepfake/research" className="transition-colors hover:text-gray-600">Research Archive</a>
         </div>
       </div>
     </div>
@@ -2158,12 +1966,25 @@ export const Footer = () => (
 ----------------------------------------
 
 --- FILE: Hero.jsx ---
-PATH: .\deep-fake-app\src\components\Hero.jsx
+PATH: .\src\components\Hero.jsx
 ----------------------------------------
 import React from 'react';
 import { motion } from 'framer-motion';
 import { useSystemStatus } from '../hooks/useSystemStatus';
 import { Activity } from 'lucide-react';
+
+const heroModels = [
+  {
+    name: "Image Detector",
+    tag: "98.63% ACC",
+    desc: "ConvNeXt-Base on image_combined with 0.9863 F1 for synthetic image detection."
+  },
+  {
+    name: "Video Detector",
+    tag: "90.89% ACC",
+    desc: "ConvNeXt Hybrid/Sequence on video_combined with 0.7841 F1 across raw clips."
+  },
+];
 
 export const Hero = () => {
   const { system, isOnline } = useSystemStatus();
@@ -2189,14 +2010,14 @@ export const Hero = () => {
   };
 
   return (
-    <section className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#0B0F14] px-6 pt-24 text-center border-b border-white/5">
+    <section id="home" className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-[#0B0F14] px-6 pt-24 text-center border-b border-white/5">
       <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
         <div className="h-[600px] w-[600px] rounded-full bg-cyan-500/10 blur-[120px] animate-pulse"></div>
       </div>
-      
+
       <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-100 contrast-150 pointer-events-none"></div>
 
-      <motion.div 
+      <motion.div
         variants={containerVariants}
         initial="hidden"
         animate="visible"
@@ -2204,9 +2025,9 @@ export const Hero = () => {
       >
         <motion.div variants={itemVariants} className="inline-flex items-center gap-3 rounded-full border border-white/10 bg-white/5 px-5 py-2 text-[10px] font-bold tracking-[0.2em] text-cyan-400 uppercase shadow-[0_0_20px_rgba(34,211,238,0.1)]">
           <Activity size={14} className="animate-pulse" />
-          Neural Integrity Analysis Active
+          Image + Video Model Routing Active
         </motion.div>
-        
+
         <motion.h1 variants={itemVariants} className="font-Sora text-6xl font-bold tracking-tight text-white md:text-8xl lg:text-9xl leading-[0.9]">
           Detect the <br />
           <span className="relative inline-block">
@@ -2214,13 +2035,13 @@ export const Hero = () => {
               Unseen.
             </span>
             <svg className="absolute -bottom-2 left-0 w-full" height="12" viewBox="0 0 600 12" fill="none">
-               <motion.path 
+              <motion.path
                 initial={{ pathLength: 0 }}
                 animate={{ pathLength: 1 }}
                 transition={{ duration: 1.5, delay: 0.8 }}
-                d="M1 10.5C100 2.5 200 2.5 300 10.5C400 18.5 500 2.5 599 10.5" 
-                stroke="url(#grad_hero)" 
-                strokeWidth="3" 
+                d="M1 10.5C100 2.5 200 2.5 300 10.5C400 18.5 500 2.5 599 10.5"
+                stroke="url(#grad_hero)"
+                strokeWidth="3"
                 strokeLinecap="round"
                 className="drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]"
               />
@@ -2233,22 +2054,22 @@ export const Hero = () => {
             </svg>
           </span>
         </motion.h1>
-        
+
         <motion.p variants={itemVariants} className="mx-auto max-w-2xl text-lg text-gray-400 md:text-xl font-Inter font-light leading-relaxed">
-          Advanced vision architectures—<span className="text-white font-medium">ConvNext, ViT, and ResNet</span>—engineered 
-          to identify synthetic media with research-grade precision. 
+          Separate <span className="text-white font-medium">image and video inference families</span> route each sample to the model trained for that media domain:
+          top-performing ConvNeXt image and video models.
         </motion.p>
-        
+
         <motion.div variants={itemVariants} className="flex flex-wrap items-center justify-center gap-6 pt-6">
           <a href="#demo" className="group relative rounded-full bg-cyan-500 px-10 py-5 text-sm font-bold text-black transition-all hover:scale-105 active:scale-95 hover:bg-cyan-400 hover:shadow-[0_0_30px_rgba(34,211,238,0.4)] overflow-hidden">
             <span className="relative z-10 text-black uppercase tracking-widest">Start Inference</span>
           </a>
-          <button className="rounded-full border border-white/10 bg-white/5 px-10 py-5 text-sm font-bold text-white backdrop-blur-sm transition-all hover:bg-white/10 hover:border-white/20 uppercase tracking-widest">
+          <a href="#architecture" className="rounded-full border border-white/10 bg-white/5 px-10 py-5 text-sm font-bold text-white backdrop-blur-sm transition-all hover:bg-white/10 hover:border-white/20 uppercase tracking-widest">
             Technical Specs
-          </button>
+          </a>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           variants={itemVariants}
           className="mt-20 flex w-full flex-wrap justify-between gap-8 border-t border-white/5 pt-10 text-left"
         >
@@ -2260,8 +2081,12 @@ export const Hero = () => {
             </div>
           </div>
           <div className="space-y-1">
-            <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Detection Accuracy</span>
-            <div className="font-mono text-sm text-white">0.9820 F1_SCORE</div>
+            <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Image Accuracy</span>
+            <div className="font-mono text-sm text-white">98.63% ACC</div>
+          </div>
+          <div className="space-y-1">
+            <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Video Accuracy</span>
+            <div className="font-mono text-sm text-white">90.89% ACC</div>
           </div>
           <div className="space-y-1">
             <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Engine Node</span>
@@ -2269,44 +2094,24 @@ export const Hero = () => {
               {isOnline && system ? system.gpu : 'OFFLINE'}
             </div>
           </div>
-          <div className="space-y-1 text-right">
-            <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Latency</span>
-            <div className="font-mono text-sm text-cyan-400">&lt; 124ms / FRAME</div>
-          </div>
         </motion.div>
       </motion.div>
 
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 1.2, duration: 1 }}
-        className="relative z-10 mt-20 grid grid-cols-1 md:grid-cols-3 gap-8 w-full max-w-5xl"
+        className="relative z-10 mt-20 grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-4xl"
       >
-        {[
-          { 
-            name: "ConvNext-Base", 
-            tag: "CNN Backbone", 
-            desc: "Utilizes modernized depthwise convolutions for multi-scale spatial feature extraction." 
-          },
-          { 
-            name: "ViT-B/16", 
-            tag: "Transformer", 
-            desc: "Global self-attention mechanisms to identify long-range inconsistencies in pixel sequences." 
-          },
-          { 
-            name: "ResNet-50", 
-            tag: "Standard Baseline", 
-            desc: "Residual learning architecture providing stable gradients for localized artifact detection." 
-          },
-        ].map((item, i) => (
-          <div key={i} className="group flex flex-col items-start gap-3 rounded-2xl border border-white/5 bg-white/[0.02] p-6 text-left backdrop-blur-md transition-all hover:border-cyan-500/20 hover:bg-white/[0.04]">
-            <div className="flex items-center gap-2">
-              <h3 className="font-Sora font-bold text-white group-hover:text-cyan-400 transition-colors">{item.name}</h3>
-              <span className="text-[8px] font-black uppercase tracking-widest text-gray-500 border border-white/10 px-1.5 py-0.5 rounded-sm bg-white/5">
+        {heroModels.map((item, i) => (
+          <div key={i} className="group flex min-h-[170px] flex-col items-start justify-between gap-6 rounded-2xl border border-white/5 bg-white/[0.02] p-8 text-left backdrop-blur-md transition-all hover:border-cyan-500/20 hover:bg-white/[0.04]">
+            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <h3 className="font-Sora text-xl font-bold text-white transition-colors group-hover:text-cyan-400">{item.name}</h3>
+              <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300">
                 {item.tag}
               </span>
             </div>
-            <p className="text-[11px] leading-relaxed text-gray-500 font-Inter font-medium italic">
+            <p className="max-w-[34rem] text-sm font-medium leading-7 text-gray-400 md:text-[15px]">
               {item.desc}
             </p>
           </div>
@@ -2319,28 +2124,68 @@ export const Hero = () => {
 ----------------------------------------
 
 --- FILE: LiveDemo.jsx ---
-PATH: .\deep-fake-app\src\components\LiveDemo.jsx
+PATH: .\src\components\LiveDemo.jsx
 ----------------------------------------
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useSystemStatus } from "../hooks/useSystemStatus";
-import { Upload, Cpu, Zap, AlertCircle, Lock } from "lucide-react";
+import { FALLBACK_INFERENCE_MODELS } from "../models/inferenceModels";
+import { Upload, Cpu, Zap, AlertCircle, Lock, Image as ImageIcon, Video } from "lucide-react";
 
 const API = "/deepfake/api";
+const VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"];
+
+const getFileDomain = (file) => {
+  if (!file) return "image";
+  if (file.type?.startsWith("video")) return "video";
+  const name = file.name.toLowerCase();
+  return VIDEO_EXTENSIONS.some((extension) => name.endsWith(extension)) ? "video" : "image";
+};
 
 export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
   const { system, isOnline } = useSystemStatus();
   const [file, setFile] = useState(null);
-  const [model, setModel] = useState("convnext");
-  const [status, setStatus] = useState("idle"); // idle, processing, success, error
+  const [models, setModels] = useState(FALLBACK_INFERENCE_MODELS);
+  const [model, setModel] = useState(FALLBACK_INFERENCE_MODELS[0].key);
+  const [status, setStatus] = useState("idle"); // idle, queued, processing, success, error
   const [result, setResult] = useState(null);
   const [error, setError] = useState("");
   const [isDragging, setIsDragging] = useState(false);
+  const [selectedDomain, setSelectedDomain] = useState("image");
+  const fileDomain = file ? getFileDomain(file) : selectedDomain;
+  const activeModels = useMemo(
+    () => models.filter((item) => item.domain === fileDomain),
+    [models, fileDomain]
+  );
+  const selectedModel = activeModels.find((item) => item.key === model) || activeModels[0];
+
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const res = await fetch(`${API}/models`);
+        const data = await res.json();
+        if (res.ok && Array.isArray(data.models) && data.models.length > 0) {
+          setModels(data.models);
+        }
+      } catch (err) {
+        setModels(FALLBACK_INFERENCE_MODELS);
+      }
+    };
+
+    loadModels();
+  }, []);
+
+  useEffect(() => {
+    if (activeModels.length > 0 && !activeModels.some((item) => item.key === model)) {
+      setModel(activeModels[0].key);
+    }
+  }, [activeModels, model]);
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files ? e.target.files[0] : null;
     if (selectedFile) {
       setFile(selectedFile);
+      setSelectedDomain(getFileDomain(selectedFile));
       setResult(null);
       setStatus("idle");
       setError("");
@@ -2359,29 +2204,57 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
     const droppedFile = e.dataTransfer.files ? e.dataTransfer.files[0] : null;
     if (droppedFile) {
       setFile(droppedFile);
+      setSelectedDomain(getFileDomain(droppedFile));
       setResult(null);
       setStatus("idle");
       setError("");
     }
   };
 
+  const pollStatus = async (jobId) => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/status/${jobId}`);
+        const data = await res.json();
+
+        if (data.status === "done") {
+          clearInterval(interval);
+          setResult(data.result);
+          setStatus("success");
+          onUpdateUser(); // Refresh credits
+        } else if (data.status === "failed") {
+          clearInterval(interval);
+          setStatus("error");
+          setError(data.error?.error || "Inference engine failure.");
+        } else {
+          setStatus(data.status); // Updates to 'processing'
+        }
+      } catch (e) {
+        clearInterval(interval);
+        setStatus("error");
+        setError("Polling connection lost.");
+      }
+    }, 2000);
+  };
+
   const runInference = async () => {
-    if (!user) {
-      onAuthRequired();
+    if (!user) { onAuthRequired(); return; }
+    if (!file) return;
+    if (!selectedModel) {
+      setStatus("error");
+      setError(`No ${fileDomain} model is available.`);
       return;
     }
 
-    if (!file) return;
-    setStatus("processing");
+    setStatus("queued");
     setError("");
 
     const formData = new FormData();
     formData.append("file", file);
-
     const token = localStorage.getItem("token");
 
     try {
-      const res = await fetch(`${API}/predict?model_name=${model}`, {
+      const res = await fetch(`${API}/predict?model_name=${selectedModel.key}`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` },
         body: formData,
@@ -2390,12 +2263,10 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
       const data = await res.json();
 
       if (res.ok) {
-        setResult(data);
-        setStatus("success");
-        onUpdateUser();
+        pollStatus(data.job_id);
       } else {
         setStatus("error");
-        setError(data.detail || "Inference failed");
+        setError(data.detail || "Inference rejected");
       }
     } catch (err) {
       setStatus("error");
@@ -2404,8 +2275,8 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
   };
 
   const isOutOfCredits = user && user.role !== 'admin' && (
-    (file?.type.startsWith('video') && user.credits.video.remaining <= 0) ||
-    (!file?.type.startsWith('video') && user.credits.image.remaining <= 0)
+    (fileDomain === 'video' && user.credits.video.remaining <= 0) ||
+    (fileDomain === 'image' && user.credits.image.remaining <= 0)
   );
 
   return (
@@ -2416,8 +2287,8 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
             Live Cluster
           </h2>
           <p className="text-gray-500 max-w-2xl mx-auto font-Inter font-medium italic">
-            Authorized node access required for neural processing. 
-            {user ? ` Authenticated: ${user.email}` : " Please authenticate to continue."}
+            Authorized node access required. 
+            {user ? ` Node: ${user.email}` : " Authenticate to initialize session."}
           </p>
         </div>
 
@@ -2435,38 +2306,74 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
               </span>
             </div>
             <div className="h-4 w-px bg-gray-200" />
-            <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest truncate max-w-[150px]">
+            <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest truncate max-w-[280px]">
               Engine: <span className="text-cyan-600">{isOnline && system ? system.gpu : 'UNREACHABLE'}</span>
             </div>
+            {isOnline && system && system.queue > 0 && (
+              <>
+                <div className="h-4 w-px bg-gray-200" />
+                <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest">
+                  Queue: <span className="text-rose-500">{system.queue} Jobs</span>
+                </div>
+              </>
+            )}
           </motion.div>
         </div>
 
         <div className="grid gap-8 lg:grid-cols-12">
+          {/* Sidebar */}
           <div className="lg:col-span-4 space-y-6">
             <div className="rounded-3xl border border-white bg-white/60 p-6 shadow-xl backdrop-blur-xl">
               <h3 className="mb-6 flex items-center gap-2 text-sm font-bold text-[#0A0A0A] uppercase tracking-wider">
                 <Cpu size={18} className="text-cyan-500" /> Architecture
               </h3>
+              <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl bg-gray-100 p-1">
+                {["image", "video"].map((domain) => {
+                  const Icon = domain === "image" ? ImageIcon : Video;
+                  const isActive = fileDomain === domain;
+                  return (
+                    <button
+                      type="button"
+                      key={domain}
+                      onClick={() => {
+                        setSelectedDomain(domain);
+                        setResult(null);
+                        setError("");
+                        if (file && getFileDomain(file) !== domain) {
+                          setFile(null);
+                          setStatus("idle");
+                        }
+                      }}
+                      className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-[10px] font-black uppercase tracking-widest ${
+                        isActive ? "bg-white text-cyan-600 shadow-sm" : "text-gray-400"
+                      }`}
+                    >
+                      <Icon size={13} /> {domain}
+                    </button>
+                  );
+                })}
+              </div>
               <div className="space-y-3">
-                {[
-                  { id: "convnext", name: "ConvNext", desc: "Highest Accuracy" },
-                  { id: "resnet50", name: "ResNet-50", desc: "Fast Baseline" },
-                  { id: "efficientnet", name: "EfficientNet", desc: "Efficient Flow" }
-                ].map((m) => (
+                {activeModels.map((m) => (
                   <button
-                    key={m.id}
-                    onClick={() => setModel(m.id)}
+                    key={m.key}
+                    onClick={() => setModel(m.key)}
                     className={`w-full flex flex-col items-start rounded-2xl border p-4 transition-all ${
-                      model === m.id 
-                      ? "border-cyan-500 bg-cyan-50/50 shadow-sm" 
-                      : "border-gray-100 bg-white hover:border-gray-200"
+                      selectedModel?.key === m.key ? "border-cyan-500 bg-cyan-50/50 shadow-sm" : "border-gray-100 bg-white hover:border-gray-200"
                     }`}
                   >
-                    <span className={`font-bold ${model === m.id ? "text-cyan-700" : "text-gray-700"}`}>{m.name}</span>
-                    <span className="text-[10px] text-gray-400 uppercase font-medium">{m.desc}</span>
+                    <span className={`font-bold ${selectedModel?.key === m.key ? "text-cyan-700" : "text-gray-700"}`}>{m.label}</span>
+                    <span className="mt-1 text-[10px] text-gray-400 uppercase font-medium">
+                      {m.category || m.mode} Node {m.score ? `| F1 ${Number(m.score).toFixed(4)}` : ""}
+                    </span>
                   </button>
                 ))}
               </div>
+              {file && (
+                <p className="mt-4 text-[10px] font-bold uppercase leading-5 tracking-widest text-gray-400">
+                  Selected {fileDomain} sample. Only {fileDomain} models are available for this run.
+                </p>
+              )}
             </div>
 
             {user && (
@@ -2474,36 +2381,29 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
                 <h3 className="mb-4 flex items-center gap-2 text-sm font-bold text-[#0A0A0A] uppercase tracking-wider">
                   Compute Balance
                 </h3>
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="bg-black/5 p-4 rounded-2xl text-center border border-white/5 shadow-inner">
+                <div className="grid grid-cols-2 gap-2 text-center">
+                  <div className="bg-black/5 p-4 rounded-2xl border border-white/5">
                     <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest block mb-1">Images</span>
-                    <span className="text-sm font-mono font-bold text-cyan-600">
-                      {user.role === 'admin' ? "∞" : user.credits.image.remaining}
-                    </span>
+                    <span className="text-sm font-mono font-bold text-cyan-600">{user.role === 'admin' ? "∞" : user.credits.image.remaining}</span>
                   </div>
-                  <div className="bg-black/5 p-4 rounded-2xl text-center border border-white/5 shadow-inner">
+                  <div className="bg-black/5 p-4 rounded-2xl border border-white/5">
                     <span className="text-[8px] font-black text-gray-400 uppercase tracking-widest block mb-1">Videos</span>
-                    <span className="text-sm font-mono font-bold text-blue-600">
-                      {user.role === 'admin' ? "∞" : user.credits.video.remaining}
-                    </span>
+                    <span className="text-sm font-mono font-bold text-blue-600">{user.role === 'admin' ? "∞" : user.credits.video.remaining}</span>
                   </div>
                 </div>
               </div>
             )}
           </div>
 
+          {/* Main Area */}
           <div className="lg:col-span-8">
             <div className="h-full flex flex-col rounded-3xl border border-white bg-white/60 p-8 shadow-2xl backdrop-blur-xl md:p-12 relative overflow-hidden">
               {!user && (
-                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/40 backdrop-blur-md">
-                  <div className="mb-4 p-4 rounded-full bg-black/5 text-[#0A0A0A]">
-                    <Lock size={32} />
-                  </div>
+                <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-white/40 backdrop-blur-md text-center">
+                  <Lock size={32} className="mb-4 text-[#0A0A0A]" />
                   <h4 className="font-Sora font-bold text-[#0A0A0A] uppercase tracking-tight">Access Restricted</h4>
-                  <p className="text-xs text-gray-500 font-medium mb-6 text-center">Authenticate to initialize research session</p>
-                  <button onClick={onAuthRequired} className="rounded-xl bg-[#0A0A0A] px-8 py-3 text-[10px] font-bold text-white uppercase tracking-[0.2em] transition-all hover:scale-105 active:scale-95 shadow-xl">
-                    Authorize Now
-                  </button>
+                  <p className="text-xs text-gray-500 font-medium mb-6">Authenticate to initialize node</p>
+                  <button onClick={onAuthRequired} className="rounded-xl bg-[#0A0A0A] px-8 py-3 text-[10px] font-bold text-white uppercase tracking-[0.2em] shadow-xl">Authorize Now</button>
                 </div>
               )}
 
@@ -2516,24 +2416,42 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
                 }}
                 className="group relative flex flex-1 flex-col items-center justify-center rounded-3xl border-2 border-dashed transition-all cursor-pointer overflow-hidden mb-8 shadow-inner"
               >
-                <input type="file" className="hidden" disabled={!user} onChange={handleFileChange} />
+                <input
+                  type="file"
+                  accept={fileDomain === "video" ? "video/*,.mp4,.mov,.avi,.mkv,.webm" : "image/*,.jpg,.jpeg,.png,.webp"}
+                  className="hidden"
+                  disabled={!user}
+                  onChange={handleFileChange}
+                />
                 
                 <AnimatePresence mode="wait">
-                  {status === "processing" ? (
+                  {status === "queued" || status === "processing" ? (
                     <motion.div key="proc" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center gap-4 text-center">
                       <div className="relative">
                         <div className="h-16 w-16 rounded-full border-4 border-gray-100 border-t-cyan-500 animate-spin" />
                         <Zap className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-cyan-500" size={20} />
                       </div>
-                      <p className="font-bold text-gray-700 animate-pulse uppercase tracking-widest text-xs">Analyzing Research Data...</p>
+                      <div className="space-y-1">
+                        <p className="font-bold text-gray-700 uppercase tracking-widest text-xs animate-pulse">
+                          {status === "queued" ? "Positioned in Queue..." : "GPU Inference Active..."}
+                        </p>
+                        <p className="text-[9px] text-gray-400 font-mono">NODE_HASH_VERIFIED</p>
+                      </div>
                     </motion.div>
                   ) : (
                     <motion.div key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex flex-col items-center text-center p-6">
                       <div className={`mb-4 rounded-full bg-white p-5 shadow-sm transition-transform ${isDragging ? 'scale-110 text-cyan-500' : 'text-gray-400 group-hover:text-cyan-500'}`}>
                         <Upload size={32} />
                       </div>
-                      <p className="text-lg font-bold text-gray-700 truncate max-w-[300px]">{file ? file.name : "Drop Sample or Click to Browse"}</p>
-                      <p className="mt-1 text-sm text-gray-400 uppercase tracking-widest text-[10px] font-bold">PNG, JPG, MP4 (MAX 100MB)</p>
+                      <p className="text-lg font-bold text-gray-700 truncate max-w-[300px]">{file ? file.name : "Drop Sample or Browse"}</p>
+                        <p className="mt-1 text-xs text-gray-400 font-bold tracking-widest uppercase">
+                          {fileDomain === "video" ? "Video mode | Max 50MB" : "Image mode | Max 10MB"}
+                        </p>
+                        {selectedModel && (
+                          <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-cyan-600">
+                            Routed to {selectedModel.label}
+                          </p>
+                        )}
                     </motion.div>
                   )}
                 </AnimatePresence>
@@ -2541,18 +2459,18 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
 
               <div className="flex gap-4">
                 <button
-                  disabled={!file || status === "processing" || isOutOfCredits}
+                  disabled={!file || !selectedModel || status === "queued" || status === "processing" || isOutOfCredits}
                   onClick={runInference}
                   className={`flex-1 rounded-2xl py-5 text-sm font-bold tracking-[0.2em] uppercase transition-all shadow-lg ${
-                    !file || status === "processing" || isOutOfCredits
+                    !file || !selectedModel || status === "queued" || status === "processing" || isOutOfCredits
                     ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                     : "bg-[#0A0A0A] text-white hover:bg-black active:scale-95 shadow-cyan-500/10"
                   }`}
                 >
-                  {isOutOfCredits ? "Insufficient Credits" : status === "processing" ? "Processing..." : "Run Node Analysis"}
+                  {!selectedModel ? "No Model Available" : isOutOfCredits ? "Insufficient Credits" : (status === "queued" || status === "processing") ? "Analyzing..." : "Begin Inference"}
                 </button>
-                {file && status !== "processing" && (
-                   <button onClick={() => { setFile(null); setStatus("idle"); setResult(null); setError(""); }} className="rounded-2xl border border-gray-200 bg-white px-6 text-[10px] font-bold text-gray-400 hover:text-rose-500 transition-colors uppercase tracking-widest font-mono">
+                {file && status === "idle" && (
+                   <button onClick={() => { setFile(null); setStatus("idle"); setResult(null); setError(""); }} className="rounded-2xl border border-gray-200 bg-white px-6 text-[10px] font-bold text-gray-400 hover:text-rose-500 transition-colors uppercase font-mono">
                     Clear
                    </button>
                 )}
@@ -2560,8 +2478,7 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
 
               {error && (
                 <div className="mt-4 flex items-center gap-2 rounded-xl bg-rose-50 p-4 text-[10px] font-bold text-rose-600 uppercase tracking-widest border border-rose-100">
-                  <AlertCircle size={14} />
-                  {error}
+                  <AlertCircle size={14} /> {error}
                 </div>
               )}
 
@@ -2569,20 +2486,28 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
                 {result && (
                   <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="mt-12 border-t border-gray-100 pt-12">
                     <div className="grid gap-8 md:grid-cols-3 items-center">
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Result</span>
+                      <div className="space-y-1 text-center md:text-left">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Classification</span>
                         <div className={`text-5xl font-Sora font-bold ${result.label === 'REAL' ? 'text-emerald-500' : 'text-rose-500'}`}>
                           {result.label}
                         </div>
                       </div>
-                      <div className="space-y-1">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Probability</span>
-                        <div className="text-2xl font-bold text-[#0A0A0A] tracking-tight">{result.confidence}</div>
+                      <div className="space-y-1 text-center md:text-left">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Confidence</span>
+                        <div className="text-2xl font-bold text-[#0A0A0A]">{result.confidence}</div>
                       </div>
-                      <div className="space-y-1 md:text-right">
-                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">VRAM Peak</span>
-                        <div className="text-2xl font-bold text-cyan-600 tracking-tight">{result.vram_peak}</div>
+                      <div className="space-y-1 text-center md:text-right">
+                        <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">VRAM PEAK</span>
+                        <div className="text-2xl font-bold text-cyan-600 font-mono tracking-tighter">{result.vram_peak}</div>
+                        {result.vram_reserved && (
+                          <div className="text-[10px] font-bold uppercase tracking-widest text-gray-400">
+                            Reserved {result.vram_reserved}
+                          </div>
+                        )}
                       </div>
+                    </div>
+                    <div className="mt-8 rounded-2xl bg-gray-50 p-4 text-[10px] font-bold uppercase tracking-widest text-gray-500">
+                      Model: <span className="text-cyan-600">{result.model_label || result.model_used}</span>
                     </div>
                   </motion.div>
                 )}
@@ -2598,25 +2523,32 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
 ----------------------------------------
 
 --- FILE: Navbar.jsx ---
-PATH: .\deep-fake-app\src\components\Navbar.jsx
+PATH: .\src\components\Navbar.jsx
 ----------------------------------------
 import React from 'react';
 import { motion } from 'framer-motion';
 import { User, LogOut, Shield, Image as ImageIcon, Video } from 'lucide-react';
+import logoIcon from '../../images/Logo/DF_Cropped_Logo_Icon.png';
+
+const appBase = import.meta.env.BASE_URL || "/";
+const appRoot = appBase.endsWith("/") ? appBase : `${appBase}/`;
+const routeHref = (path = "") => `${appRoot}${path}`.replace(/\/{2,}/g, "/");
+const sectionHref = (sectionId) => `${appRoot}#${sectionId}`;
 
 export const Navbar = ({ user, onLogout, onLoginClick }) => (
   <nav className="fixed top-0 z-50 w-full border-b border-white/5 bg-black/20 backdrop-blur-md">
     <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-      <div className="flex items-center gap-2">
-        <div className="h-8 w-8 rounded-lg bg-cyan-500 shadow-[0_0_15px_rgba(6,182,212,0.5)]"></div>
+      <a href={sectionHref("home")} className="flex items-center gap-2 transition-opacity hover:opacity-80">
+        <img src={logoIcon} alt="DF-ENGINE" className="h-8 w-8 rounded-lg object-contain shadow-[0_0_15px_rgba(6,182,212,0.35)]" />
         <span className="font-Sora text-xl font-bold tracking-tight text-white uppercase">DF-ENGINE</span>
-      </div>
+      </a>
       
       <div className="hidden items-center gap-8 text-sm font-medium text-gray-400 md:flex">
-        <a href="#pipeline" className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Pipeline</a>
-        <a href="#architecture" className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Architecture</a>
-        <a href="#demo" className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Live Demo</a>
-        <a href="#pricing" className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Pricing</a>
+        <a href={sectionHref("pipeline")} className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Pipeline</a>
+        <a href={sectionHref("architecture")} className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Architecture</a>
+        <a href={sectionHref("demo")} className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Live Demo</a>
+        <a href={routeHref("research")} className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Research</a>
+        <a href={sectionHref("pricing")} className="transition-colors hover:text-cyan-400 uppercase tracking-widest text-[10px] font-bold">Pricing</a>
       </div>
 
       <div className="flex items-center gap-4">
@@ -2672,7 +2604,7 @@ export const Navbar = ({ user, onLogout, onLoginClick }) => (
 ----------------------------------------
 
 --- FILE: Pipeline.jsx ---
-PATH: .\deep-fake-app\src\components\Pipeline.jsx
+PATH: .\src\components\Pipeline.jsx
 ----------------------------------------
 import React from 'react';
 import { motion } from 'framer-motion';
@@ -2700,22 +2632,22 @@ export const Pipeline = () => {
     {
       icon: <Upload className="text-blue-500" />,
       title: "Data Ingestion",
-      desc: "Secure multi-part upload of research samples. Automated format validation and metadata extraction."
+      desc: "Secure upload intake with extension, size, and media-type validation before any GPU work is queued."
     },
     {
       icon: <Database className="text-cyan-500" />,
-      title: "Preprocessing",
-      desc: "Pixel normalization and tensor conversion. Dynamic resizing to 224x224 for optimized architecture alignment."
+      title: "Domain Routing",
+      desc: "Images route to image-trained ConvNeXt/Swin/ViT models; videos route to sequence or hybrid video models."
     },
     {
       icon: <Cpu className="text-indigo-500" />,
-      title: "Neural Inference",
-      desc: "Parallel execution across targeted vision clusters (ConvNext / ViT) using synchronous GPU workers."
+      title: "Isolated Inference",
+      desc: "A short-lived Python worker loads the selected checkpoint, runs CUDA inference, returns JSON, then exits."
     },
     {
       icon: <BarChart3 className="text-emerald-500" />,
       title: "Integrity Synthesis",
-      desc: "Generation of probabilistic integrity scores and VRAM-efficient result reporting."
+      desc: "Classification, confidence, peak VRAM, and model provenance are returned while worker-resident VRAM is purged."
     }
   ];
 
@@ -2732,8 +2664,8 @@ export const Pipeline = () => {
             Inference Pipeline
           </h2>
           <p className="text-gray-500 max-w-xl mx-auto font-Inter">
-            A high-throughput sequence engineered for low-latency neural analysis and 
-            real-time media integrity verification.
+            A media-aware path that validates each sample, selects the right image or video
+            model family, and isolates GPU memory per inference job.
           </p>
         </motion.div>
 
@@ -2763,10 +2695,10 @@ export const Pipeline = () => {
               
               <div className="space-y-3">
                 <div className="flex items-center gap-3">
-                  <span className="font-mono text-[10px] font-black text-gray-300 tracking-widest">STEP_0{i+1}</span>
+                  <span className="font-mono text-xs font-black text-gray-300 tracking-widest">STEP_0{i+1}</span>
                   <h3 className="font-Sora text-lg font-bold text-[#0A0A0A]">{step.title}</h3>
                 </div>
-                <p className="text-sm leading-relaxed text-gray-500 font-medium italic">
+                <p className="text-sm leading-7 text-gray-500 font-medium">
                   {step.desc}
                 </p>
               </div>
@@ -2782,9 +2714,9 @@ export const Pipeline = () => {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           transition={{ delay: 1 }}
-          className="mt-16 text-center font-mono text-[9px] font-bold text-gray-400 uppercase tracking-[0.3em]"
+          className="mt-16 text-center font-mono text-xs font-bold text-gray-400 uppercase tracking-[0.24em]"
         >
-          Pipeline Optimized for Distributed CUDA Kernels & Synchronous I/O
+          Pipeline Optimized for Domain Routing, Isolated CUDA Workers, and Immediate VRAM Release
         </motion.p>
       </div>
     </section>
@@ -2794,16 +2726,15 @@ export const Pipeline = () => {
 ----------------------------------------
 
 --- FILE: Pricing.jsx ---
-PATH: .\deep-fake-app\src\components\Pricing.jsx
+PATH: .\src\components\Pricing.jsx
 ----------------------------------------
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
-import { CreditCard, Zap, Sparkles } from 'lucide-react';
+import { Sparkles, Zap } from 'lucide-react';
 
-const RAZORPAY_KEY_ID = "rzp_live_SUhpE0sGoGzURD"; 
+const RAZORPAY_KEY_ID = "rzp_live_SUhpE0sGoGzURD";
 
 export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
-  // Use an object to track loading per unique category-quantity combination
   const [loadingStates, setLoadingStates] = useState({});
 
   useEffect(() => {
@@ -2820,11 +2751,10 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
     }
 
     const loadKey = `${category}-${quantity}`;
-    setLoadingStates(prev => ({ ...prev, [loadKey]: true }));
+    setLoadingStates((prev) => ({ ...prev, [loadKey]: true }));
     const token = localStorage.getItem("token");
 
     try {
-      // 1. Create order on backend with category, quantity AND specific bundle amount
       const res = await fetch(`/deepfake/api/payments/create-order?category=${category}&quantity=${quantity}&amount=${amount}`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
@@ -2833,7 +2763,6 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
 
       if (!res.ok) throw new Error(order.detail || "Order creation failed");
 
-      // 2. Open Razorpay Checkout
       const options = {
         key: RAZORPAY_KEY_ID,
         amount: order.amount,
@@ -2842,12 +2771,11 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
         description: `Acquire ${quantity} ${category.toUpperCase()} Credits`,
         order_id: order.id,
         handler: async function (response) {
-          // 3. Verify payment on backend
           const verifyRes = await fetch("/deepfake/api/payments/verify", {
             method: "POST",
-            headers: { 
+            headers: {
               "Content-Type": "application/x-www-form-urlencoded",
-              "Authorization": `Bearer ${token}` 
+              "Authorization": `Bearer ${token}`
             },
             body: new URLSearchParams({
               order_id: response.razorpay_order_id,
@@ -2872,95 +2800,111 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
       console.error("Payment error:", err);
       alert(err.message);
     } finally {
-      setLoadingStates(prev => ({ ...prev, [loadKey]: false }));
+      setLoadingStates((prev) => ({ ...prev, [loadKey]: false }));
     }
   };
 
   const categories = [
     {
       id: "image",
-      title: "Image Verification",
-      price: 10,
+      title: "Image Inference",
+      subtitle: "Static-image jobs routed to image-trained ConvNeXt, Swin, and ViT checkpoints.",
       icon: <Zap size={20} className="text-cyan-400" />,
+      unit: "One credit processes one image sample.",
       options: [
-        { credits: 5, amount: 50 },
-        { credits: 25, amount: 200, popular: true },
-        { credits: 100, amount: 700 },
+        { credits: 5, amount: 50, label: "Starter" },
+        { credits: 25, amount: 200, label: "Research Batch", popular: true },
+        { credits: 100, amount: 700, label: "Dataset Sweep" },
       ]
     },
     {
       id: "video",
-      title: "Video Intelligence",
-      price: 20,
+      title: "Video Inference",
+      subtitle: "Raw-video jobs routed to sequence, spatial, or hybrid video models in isolated GPU workers.",
       icon: <Sparkles size={20} className="text-blue-400" />,
+      unit: "One credit processes one uploaded video clip.",
       options: [
-        { credits: 3, amount: 60 },
-        { credits: 15, amount: 250, popular: true },
-        { credits: 50, amount: 800 },
+        { credits: 3, amount: 60, label: "Clip Trial" },
+        { credits: 15, amount: 250, label: "Validation Batch", popular: true },
+        { credits: 50, amount: 800, label: "Video Sweep" },
       ]
     }
   ];
 
   return (
-    <section id="pricing" className="bg-white py-32 px-6">
+    <section id="pricing" className="bg-white px-6 py-20">
       <div className="mx-auto max-w-7xl">
-        <div className="mb-20 text-center space-y-4">
-          <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-4 py-1 text-[10px] font-black text-cyan-600 uppercase tracking-widest">
+        <div className="mb-12 space-y-3 text-center">
+          <div className="inline-flex items-center gap-2 rounded-full bg-cyan-50 px-4 py-1.5 text-xs font-black text-cyan-600 uppercase tracking-widest">
             Compute Allocation
           </div>
           <h2 className="font-Sora text-3xl font-bold tracking-tight text-[#0A0A0A] md:text-5xl uppercase text-center">
             Acquire Credits
           </h2>
-          <p className="text-gray-500 max-w-xl mx-auto font-Inter font-medium italic leading-relaxed text-center">
-            Provision additional neural processing time. Free tiers are limited to 5 image and 3 video research samples.
+          <p className="mx-auto max-w-2xl text-center font-Inter text-sm font-medium leading-6 text-gray-500">
+            Credits are split by media domain because image and video jobs use different model families,
+            upload limits, and isolated GPU worker lifecycles.
           </p>
         </div>
-        
-        <div className="space-y-24 text-center md:text-left">
+
+        <div className="space-y-12 text-center md:text-left">
           {categories.map((cat) => (
-            <div key={cat.id} className="space-y-10">
-              <div className="flex items-center gap-4 justify-center md:justify-start">
-                <div className="p-3 rounded-2xl bg-[#0B0F14] text-white shadow-xl shadow-cyan-500/10">
+            <div key={cat.id} className="space-y-5">
+              <div className="flex flex-col gap-3 text-center md:flex-row md:items-center md:text-left">
+                <div className="mx-auto rounded-xl bg-[#0B0F14] p-2.5 text-white shadow-lg shadow-cyan-500/10 md:mx-0">
                   {cat.icon}
                 </div>
-                <h3 className="font-Sora text-2xl font-bold uppercase tracking-tight text-[#0A0A0A]">{cat.title}</h3>
+                <div>
+                  <h3 className="font-Sora text-xl font-bold uppercase tracking-tight text-[#0A0A0A]">{cat.title}</h3>
+                  <p className="mt-1 max-w-2xl text-xs leading-5 text-gray-500">{cat.subtitle}</p>
+                </div>
               </div>
 
-              <div className="grid gap-8 md:grid-cols-3">
-                {cat.options.map((opt, i) => {
+              <div className="grid gap-5 md:grid-cols-3">
+                {cat.options.map((opt) => {
                   const loadKey = `${cat.id}-${opt.credits}`;
                   const isLoading = loadingStates[loadKey];
                   return (
-                    <div key={i} className={`relative flex flex-col rounded-[2rem] border p-8 transition-all hover:scale-[1.02] ${
-                      opt.popular 
-                      ? "bg-[#0B0F14] text-white border-cyan-500/30 shadow-2xl shadow-cyan-500/10" 
-                      : "border-gray-100 bg-gray-50/50 text-[#0A0A0A]"
-                    }`}>
+                    <motion.div
+                      key={loadKey}
+                      whileHover={{ y: -4 }}
+                      className={`relative flex flex-col rounded-2xl border p-5 transition-all ${
+                        opt.popular
+                          ? "border-cyan-500/30 bg-[#0B0F14] text-white shadow-2xl shadow-cyan-500/10"
+                          : "border-gray-200 bg-gray-100/70 text-[#0A0A0A]"
+                      }`}
+                    >
                       {opt.popular && (
-                        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-500 px-4 py-1 text-[8px] font-black text-black uppercase tracking-widest">
-                          High Yield
+                        <div className="absolute left-1/2 top-0 -translate-x-1/2 -translate-y-1/2 rounded-full bg-cyan-500 px-3 py-0.5 text-[9px] font-black uppercase tracking-widest text-black">
+                          Best Value
                         </div>
                       )}
-                      <div className="mb-8">
-                        <div className="flex items-baseline gap-2 justify-center md:justify-start">
-                          <span className="text-4xl font-Sora font-bold tracking-tighter">₹{opt.amount}</span>
-                          <span className={`text-[10px] font-bold uppercase tracking-widest ${opt.popular ? "text-gray-500" : "text-gray-400"}`}>
+                      <div className="mb-5">
+                        <div className={`mb-2 text-[10px] font-black uppercase tracking-widest ${opt.popular ? "text-cyan-300" : "text-gray-500"}`}>
+                          {opt.label}
+                        </div>
+                        <div className="flex items-baseline justify-center gap-2 md:justify-start">
+                          <span className="font-Sora text-3xl font-bold tracking-tighter">Rs. {opt.amount}</span>
+                          <span className={`text-[10px] font-bold uppercase tracking-widest ${opt.popular ? "text-gray-500" : "text-gray-500"}`}>
                             / {opt.credits} Credits
                           </span>
                         </div>
+                        <p className={`mt-2 text-xs leading-5 ${opt.popular ? "text-gray-400" : "text-gray-600"}`}>
+                          {cat.unit}
+                        </p>
                       </div>
-                      <button 
+                      <button
                         disabled={isLoading}
                         onClick={() => handlePurchase(cat.id, opt.credits, opt.amount)}
-                        className={`mt-auto w-full rounded-2xl py-4 text-[10px] font-black uppercase tracking-[0.2em] transition-all ${
+                        className={`mt-auto w-full rounded-xl py-3 text-[10px] font-black uppercase tracking-[0.18em] transition-all ${
                           opt.popular
-                          ? "bg-cyan-500 text-black hover:bg-cyan-400 shadow-lg shadow-cyan-500/20"
-                          : "bg-white text-black border border-gray-200 hover:border-black shadow-sm"
+                            ? "bg-cyan-500 text-black shadow-lg shadow-cyan-500/20 hover:bg-cyan-400"
+                            : "border border-gray-200 bg-white text-black shadow-sm hover:border-black"
                         } ${isLoading ? 'opacity-50' : ''}`}
                       >
                         {isLoading ? "INITIALIZING..." : "PROVISION"}
                       </button>
-                    </div>
+                    </motion.div>
                   );
                 })}
               </div>
@@ -2974,8 +2918,320 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
 
 ----------------------------------------
 
+--- FILE: Research.jsx ---
+PATH: .\src\components\Research.jsx
+----------------------------------------
+import { useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import { ArrowLeft, BookOpen, CheckCircle2, Code2, FileText, Layers3, Table2 } from "lucide-react";
+import { FLAT_RESEARCH_DOCUMENTS, RESEARCH_DOCUMENTS } from "../research/researchDocuments";
+
+const appBase = import.meta.env.BASE_URL || "/";
+
+const sectionIcons = [BookOpen, Layers3, CheckCircle2, FileText];
+
+const parseResearchContent = (content) => {
+  const lines = content.replace(/\r\n/g, "\n").split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    const trimmed = line.trim();
+
+    if (!trimmed) {
+      index += 1;
+      continue;
+    }
+
+    if (/^#{1,3}\s+/.test(trimmed)) {
+      const level = trimmed.match(/^#+/)[0].length;
+      blocks.push({ type: "heading", level, text: trimmed.replace(/^#{1,3}\s+/, "") });
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("```")) {
+      const language = trimmed.replace("```", "").trim();
+      const code = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        code.push(lines[index]);
+        index += 1;
+      }
+      blocks.push({ type: "code", language, text: code.join("\n") });
+      index += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith("|")) {
+      const rows = [];
+      while (index < lines.length && lines[index].trim().startsWith("|")) {
+        const row = lines[index].trim();
+        if (!/^\|\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?$/.test(row)) {
+          rows.push(row.split("|").slice(1, -1).map((cell) => cell.trim()));
+        }
+        index += 1;
+      }
+      blocks.push({ type: "table", rows });
+      continue;
+    }
+
+    if (/^\s*-\s+/.test(line)) {
+      const items = [];
+      while (index < lines.length && /^\s*-\s+/.test(lines[index])) {
+        const depth = Math.floor((lines[index].match(/^\s*/)[0].length || 0) / 2);
+        items.push({ depth, text: lines[index].replace(/^\s*-\s+/, "") });
+        index += 1;
+      }
+      blocks.push({ type: "list", items });
+      continue;
+    }
+
+    const paragraph = [trimmed];
+    index += 1;
+    while (
+      index < lines.length &&
+      lines[index].trim() &&
+      !/^#{1,3}\s+/.test(lines[index].trim()) &&
+      !/^\s*-\s+/.test(lines[index]) &&
+      !lines[index].trim().startsWith("|") &&
+      !lines[index].trim().startsWith("```")
+    ) {
+      paragraph.push(lines[index].trim());
+      index += 1;
+    }
+    blocks.push({ type: "paragraph", text: paragraph.join(" ") });
+  }
+
+  return blocks;
+};
+
+const inlineContent = (text) => {
+  const parts = text.split(/(`[^`]+`)/g);
+  return parts.map((part, index) => {
+    if (part.startsWith("`") && part.endsWith("`")) {
+      return (
+        <code key={index} className="rounded-md bg-cyan-50 px-1.5 py-0.5 font-mono text-[0.9em] font-bold text-cyan-700">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return part;
+  });
+};
+
+const ResearchTable = ({ rows }) => {
+  const [head, ...body] = rows;
+
+  return (
+    <div className="my-6 overflow-x-auto rounded-2xl border border-gray-100 bg-white shadow-sm">
+      <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-4 py-3 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">
+        <Table2 size={14} /> Evidence Table
+      </div>
+      <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+        {head && (
+          <thead>
+            <tr className="bg-white text-[10px] uppercase tracking-widest text-gray-500">
+              {head.map((cell, cellIndex) => (
+                <th key={cellIndex} className="border-b border-gray-100 px-4 py-3 font-black">{inlineContent(cell)}</th>
+              ))}
+            </tr>
+          </thead>
+        )}
+        <tbody>
+          {body.map((row, rowIndex) => (
+            <tr key={rowIndex} className="border-b border-gray-50 last:border-b-0">
+              {row.map((cell, cellIndex) => (
+                <td key={cellIndex} className="px-4 py-3 align-top leading-6 text-gray-600">{inlineContent(cell)}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const DocumentContent = ({ content }) => {
+  const blocks = useMemo(() => parseResearchContent(content), [content]);
+  let sectionIndex = 0;
+
+  return (
+    <div className="space-y-6">
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          if (block.level === 1) {
+            return (
+              <div key={index} className="rounded-2xl border border-cyan-100 bg-cyan-50/70 p-6">
+                <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-white px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-600 shadow-sm">
+                  <BookOpen size={14} /> Document Focus
+                </div>
+                <h1 className="font-Sora text-3xl font-bold tracking-tight text-[#0A0A0A] md:text-4xl">{block.text}</h1>
+              </div>
+            );
+          }
+
+          const Icon = sectionIcons[sectionIndex % sectionIcons.length];
+          sectionIndex += 1;
+          return (
+            <motion.div
+              key={index}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.25 }}
+              className="mt-10 flex items-start gap-4 rounded-2xl border border-gray-100 bg-white p-5 shadow-sm"
+            >
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#0A0A0A] text-cyan-400">
+                <Icon size={19} />
+              </div>
+              <div>
+                <div className="mb-1 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">Research Section</div>
+                <h2 className="font-Sora text-2xl font-bold tracking-tight text-[#0A0A0A]">{block.text}</h2>
+              </div>
+            </motion.div>
+          );
+        }
+
+        if (block.type === "paragraph") {
+          return (
+            <p key={index} className="rounded-2xl border border-white bg-white/70 px-5 py-4 text-sm font-medium leading-7 text-gray-600 shadow-sm">
+              {inlineContent(block.text)}
+            </p>
+          );
+        }
+
+        if (block.type === "list") {
+          return (
+            <div key={index} className="grid gap-3 md:grid-cols-2">
+              {block.items.map((item, itemIndex) => (
+                <div
+                  key={itemIndex}
+                  className={`flex gap-3 rounded-2xl border border-gray-100 bg-white p-4 shadow-sm ${item.depth ? "md:ml-6" : ""}`}
+                >
+                  <CheckCircle2 size={17} className="mt-0.5 shrink-0 text-cyan-500" />
+                  <div className="text-sm font-semibold leading-6 text-gray-700">{inlineContent(item.text)}</div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+
+        if (block.type === "code") {
+          return (
+            <div key={index} className="overflow-hidden rounded-2xl border border-gray-900 bg-[#0A0A0A] shadow-xl">
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                <div className="flex items-center gap-2 text-[10px] font-black uppercase tracking-[0.2em] text-cyan-400">
+                  <Code2 size={14} /> Command Note
+                </div>
+                {block.language && <div className="font-mono text-[10px] font-bold text-gray-500">{block.language}</div>}
+              </div>
+              <pre className="overflow-x-auto p-5 text-xs leading-6 text-gray-100"><code>{block.text}</code></pre>
+            </div>
+          );
+        }
+
+        if (block.type === "table") {
+          return <ResearchTable key={index} rows={block.rows} />;
+        }
+
+        return null;
+      })}
+    </div>
+  );
+};
+
+export const Research = () => {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const activeDocument = FLAT_RESEARCH_DOCUMENTS[activeIndex];
+  const totalWords = useMemo(
+    () => FLAT_RESEARCH_DOCUMENTS.reduce((sum, doc) => sum + doc.content.split(/\s+/).filter(Boolean).length, 0),
+    []
+  );
+
+  return (
+    <main className="min-h-screen bg-[#F7F9FC] pt-28">
+      <section className="border-b border-gray-200 bg-[#0A0A0A] px-6 py-16 text-white">
+        <div className="mx-auto max-w-7xl">
+          <a href={appBase} className="mb-8 inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-gray-400 transition-colors hover:text-cyan-400">
+            <ArrowLeft size={14} /> Back to Engine
+          </a>
+          <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
+            <div className="max-w-3xl">
+              <div className="mb-4 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-400">
+                <BookOpen size={16} /> Research Archive
+              </div>
+              <h1 className="font-Sora text-4xl font-bold tracking-tight md:text-6xl">DF-ENGINE Research</h1>
+              <p className="mt-5 max-w-2xl text-sm font-medium leading-7 text-gray-400">
+                Full repository documentation for model evidence, inference assumptions, datasets, training methodology, deployment constraints, and reproducible command notes.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-right">
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <div className="text-3xl font-bold text-white">{FLAT_RESEARCH_DOCUMENTS.length}</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Documents</div>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-5">
+                <div className="text-3xl font-bold text-white">{totalWords.toLocaleString()}</div>
+                <div className="text-[10px] font-bold uppercase tracking-widest text-gray-500">Words</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section className="mx-auto grid max-w-[90rem] gap-8 px-6 py-10 lg:grid-cols-[26rem_minmax(0,1fr)]">
+        <aside className="min-w-0">
+          <div className="sticky top-24 rounded-2xl border border-white bg-white/80 p-5 shadow-xl backdrop-blur-xl">
+            {RESEARCH_DOCUMENTS.map((group) => (
+              <div key={group.group} className="mb-6 last:mb-0">
+                <div className="mb-3 px-2 text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{group.group}</div>
+                <div className="space-y-1">
+                  {group.docs.map((doc) => {
+                    const docIndex = FLAT_RESEARCH_DOCUMENTS.indexOf(doc);
+                    const isActive = docIndex === activeIndex;
+                    return (
+                      <button
+                        key={doc.filename}
+                        onClick={() => setActiveIndex(docIndex)}
+                        className={`w-full rounded-xl px-3 py-3 text-left transition-all ${
+                          isActive ? "bg-cyan-50 text-cyan-700 shadow-sm" : "text-gray-600 hover:bg-gray-50"
+                        }`}
+                      >
+                        <span className="flex items-start gap-2">
+                          <FileText size={14} className={isActive ? "mt-0.5 text-cyan-500" : "mt-0.5 text-gray-300"} />
+                          <span className="min-w-0">
+                            <span className="block text-xs font-bold">{doc.title}</span>
+                            <span className="mt-1 block truncate text-[9px] font-mono text-gray-400">{doc.filename}</span>
+                          </span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </aside>
+
+        <article className="min-w-0">
+          <div className="rounded-2xl border border-white bg-white/90 p-6 shadow-xl backdrop-blur-xl md:p-10">
+            <div className="mb-8 border-b border-gray-100 pb-5">
+              <div className="text-[10px] font-bold uppercase tracking-[0.2em] text-cyan-600">{activeDocument.filename}</div>
+              <div className="mt-2 font-Sora text-2xl font-bold tracking-tight text-[#0A0A0A]">{activeDocument.title}</div>
+            </div>
+            <DocumentContent content={activeDocument.content} />
+          </div>
+        </article>
+      </section>
+    </main>
+  );
+};
+
+----------------------------------------
+
 --- FILE: Setup.jsx ---
-PATH: .\deep-fake-app\src\components\Setup.jsx
+PATH: .\src\components\Setup.jsx
 ----------------------------------------
 import React from 'react';
 import { motion } from 'framer-motion';
@@ -2985,22 +3241,22 @@ export const Setup = () => {
   const steps = [
     {
       title: "VRAM-Aware Scheduling",
-      desc: "Intelligent job allocation based on real-time GPU memory availability. Maximizes cluster throughput without OOM errors.",
+      desc: "Real-time GPU memory checks before every request keep image and video jobs from entering unsafe OOM states.",
       icon: <Layers className="text-cyan-500" />
     },
     {
-      title: "GPU Worker Pool",
-      desc: "Distributed compute nodes running optimized CUDA kernels for parallel model execution across ConvNext and ViT layers.",
+      title: "Isolated GPU Workers",
+      desc: "Each inference runs in a short-lived Python subprocess so CUDA context and model weights die with the worker.",
       icon: <Server className="text-blue-500" />
     },
     {
-      title: "Warm Model Cache",
-      desc: "Frequently used architectures are kept in VRAM to eliminate cold-start latency, ensuring sub-second inference triggers.",
+      title: "Domain Model Routing",
+      desc: "Image samples route to image-trained ConvNeXt/Swin/ViT models; videos route to video-trained sequence and hybrid models.",
       icon: <Zap className="text-amber-500" />
     },
     {
-      title: "Auto-Purge Lifecycle",
-      desc: "Automated storage management that persists results for research analysis before performing a secure timed wipe.",
+      title: "Instant Purge Lifecycle",
+      desc: "Uploads, temporary tensors, and worker-resident VRAM are released immediately after each completed inference job.",
       icon: <Shield className="text-emerald-500" />
     }
   ];
@@ -3015,15 +3271,15 @@ export const Setup = () => {
             viewport={{ once: true }}
             className="space-y-8"
           >
-            <div className="inline-flex items-center gap-2 rounded-lg bg-cyan-50 px-3 py-1 text-[10px] font-bold text-cyan-600 uppercase tracking-[0.2em]">
+            <div className="inline-flex items-center gap-2 rounded-lg bg-cyan-50 px-3 py-1.5 text-xs font-bold text-cyan-600 uppercase tracking-[0.18em]">
               Infrastructure Setup
             </div>
             <h2 className="font-Sora text-4xl font-bold tracking-tight text-[#0A0A0A] md:text-5xl leading-tight">
               Production-Grade <br /> Server Architecture
             </h2>
             <p className="text-lg text-gray-500 font-Inter leading-relaxed">
-              Our backend isn't just an API; it's a dedicated GPU cluster designed for 
-              stability, persistence, and high-load neural processing.
+              The backend now treats inference as an isolated GPU transaction: validate the media,
+              route it to the correct model family, run a disposable worker, then purge the process.
             </p>
             
             <div className="grid gap-6 sm:grid-cols-2">
@@ -3032,8 +3288,8 @@ export const Setup = () => {
                   <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-50 transition-colors group-hover:bg-cyan-500 group-hover:text-white">
                     {item.icon}
                   </div>
-                  <h4 className="font-bold text-[#0A0A0A] text-sm">{item.title}</h4>
-                  <p className="text-xs text-gray-400 leading-relaxed italic">{item.desc}</p>
+                  <h4 className="font-bold text-[#0A0A0A] text-base">{item.title}</h4>
+                  <p className="text-sm text-gray-500 leading-7">{item.desc}</p>
                 </div>
               ))}
             </div>
@@ -3053,16 +3309,16 @@ export const Setup = () => {
                   <div className="h-2 w-2 rounded-full bg-amber-400"></div>
                   <div className="h-2 w-2 rounded-full bg-emerald-400"></div>
                 </div>
-                <span className="font-mono text-[10px] text-gray-400 uppercase tracking-widest">cluster_logs_v3.log</span>
+                <span className="font-mono text-xs text-gray-400 uppercase tracking-widest">isolated_worker.log</span>
               </div>
               
-              <div className="space-y-4 font-mono text-[11px] leading-relaxed">
+              <div className="space-y-4 font-mono text-sm leading-7">
                 <p className="text-gray-400"><span className="text-cyan-600">[08:42:11]</span> INIT_STORAGE: storage/uploads/ initialized.</p>
-                <p className="text-gray-400"><span className="text-cyan-600">[08:42:12]</span> GPU_WORKER_0: Detected NVIDIA A100 (80GB).</p>
-                <p className="text-gray-400"><span className="text-cyan-600">[08:42:15]</span> CACHE_LOAD: ConvNext-Base mapping to VRAM...</p>
-                <p className="text-green-600/80"><span className="text-cyan-600">[08:42:18]</span> CLUSTER_READY: Accepting incoming RPC requests.</p>
+                <p className="text-gray-400"><span className="text-cyan-600">[08:42:12]</span> ROUTE_MEDIA: image/video domain resolved.</p>
+                <p className="text-gray-400"><span className="text-cyan-600">[08:42:15]</span> SPAWN_WORKER: isolated CUDA process started.</p>
+                <p className="text-green-600/80"><span className="text-cyan-600">[08:42:18]</span> WORKER_EXIT: model VRAM released after inference.</p>
                 <div className="h-px bg-gray-200 my-4" />
-                <p className="text-blue-600/80 animate-pulse">Waiting for batch submission...</p>
+                <p className="text-blue-600/80 animate-pulse">Waiting for next routed sample...</p>
               </div>
             </div>
           </motion.div>
@@ -3075,7 +3331,7 @@ export const Setup = () => {
 ----------------------------------------
 
 --- FILE: useSystemStatus.js ---
-PATH: .\deep-fake-app\src\hooks\useSystemStatus.js
+PATH: .\src\hooks\useSystemStatus.js
 ----------------------------------------
 import { useState, useEffect } from "react";
 
@@ -3110,6 +3366,81 @@ export const useSystemStatus = () => {
 
   return { system, isOnline };
 };
+
+----------------------------------------
+
+--- FILE: inferenceModels.js ---
+PATH: .\src\models\inferenceModels.js
+----------------------------------------
+export const FALLBACK_INFERENCE_MODELS = [
+  { key: "image_convnext_convnext_base", domain: "image", label: "ConvNeXt Base", family: "ConvNeXt", score: 0.9863, mode: "image", category: "spatial" },
+  { key: "image_convnext_convnext_large", domain: "image", label: "ConvNeXt Large", family: "ConvNeXt", score: 0.9840, mode: "image", category: "spatial" },
+  { key: "image_swin_swin_base_patch4_window7_224", domain: "image", label: "Swin Base", family: "Swin", score: 0.9820, mode: "image", category: "spatial" },
+  { key: "image_vit_vit_base_patch16_224", domain: "image", label: "ViT Base", family: "ViT", score: 0.9702, mode: "image", category: "spatial" },
+  { key: "image_vit_vit_large_patch16_224", domain: "image", label: "ViT Large", family: "ViT", score: 0.9546, mode: "image", category: "spatial" },
+  { key: "video_convnext_sequence_convnext_base", domain: "video", label: "ConvNeXt Sequence Base", family: "ConvNeXt Sequence", score: 0.7090, mode: "sequence", category: "temporal" },
+  { key: "video_convnext_convnext_base", domain: "video", label: "ConvNeXt Spatial Base", family: "ConvNeXt", score: 0.7023, mode: "single", category: "spatial" },
+  { key: "video_convnext_hybrid_convnext_large", domain: "video", label: "ConvNeXt Hybrid Large", family: "ConvNeXt Hybrid", score: 0.6212, mode: "sequence", category: "spatiotemporal" },
+  { key: "video_convnext_hybrid_convnext_base", domain: "video", label: "ConvNeXt Hybrid Base", family: "ConvNeXt Hybrid", score: 0.5766, mode: "sequence", category: "spatiotemporal" },
+  { key: "video_swin_swin_base_patch4_window7_224", domain: "video", label: "Swin Spatial Base", family: "Swin", score: 0.5669, mode: "single", category: "spatial" },
+  { key: "video_convnext_sequence_convnext_large", domain: "video", label: "ConvNeXt Sequence Large", family: "ConvNeXt Sequence", score: 0.4986, mode: "sequence", category: "temporal" },
+  { key: "video_maxvit_hybrid_maxvit_base_tf_224_in1k", domain: "video", label: "MaxViT Hybrid Base", family: "MaxViT Hybrid", score: 0.3462, mode: "sequence", category: "spatiotemporal" },
+];
+
+----------------------------------------
+
+--- FILE: researchDocuments.js ---
+PATH: .\src\research\researchDocuments.js
+----------------------------------------
+import problemDefinition from "../../documents/01_problem_definition.md?raw";
+import dataCollection from "../../documents/02_data_collection.md?raw";
+import preprocessing from "../../documents/03_data_cleaning_preprocessing.md?raw";
+import exploratoryAnalysis from "../../documents/04_exploratory_data_analysis.md?raw";
+import featureEngineering from "../../documents/05_feature_engineering.md?raw";
+import modelSelection from "../../documents/06_model_selection.md?raw";
+import modelTraining from "../../documents/07_model_training.md?raw";
+import modelEvaluation from "../../documents/08_model_evaluation.md?raw";
+import hyperparameterTuning from "../../documents/09_hyperparameter_tuning.md?raw";
+import deployment from "../../documents/10_deployment.md?raw";
+import monitoring from "../../documents/11_monitoring_maintenance.md?raw";
+import iteration from "../../documents/12_iteration_continuous_improvement.md?raw";
+import commands from "../../documents/commands.md?raw";
+import dataset from "../../documents/dataset.md?raw";
+import experimentMatrix from "../../documents/experiment_matrix.md?raw";
+import readme from "../../documents/README.md?raw";
+import researchNotes from "../../documents/research_notes.md?raw";
+
+export const RESEARCH_DOCUMENTS = [
+  {
+    group: "Research Lifecycle",
+    docs: [
+      { title: "Problem Definition", filename: "documents/01_problem_definition.md", content: problemDefinition },
+      { title: "Data Collection", filename: "documents/02_data_collection.md", content: dataCollection },
+      { title: "Data Cleaning and Preprocessing", filename: "documents/03_data_cleaning_preprocessing.md", content: preprocessing },
+      { title: "Exploratory Data Analysis", filename: "documents/04_exploratory_data_analysis.md", content: exploratoryAnalysis },
+      { title: "Feature Engineering", filename: "documents/05_feature_engineering.md", content: featureEngineering },
+      { title: "Model Selection", filename: "documents/06_model_selection.md", content: modelSelection },
+      { title: "Model Training", filename: "documents/07_model_training.md", content: modelTraining },
+      { title: "Model Evaluation", filename: "documents/08_model_evaluation.md", content: modelEvaluation },
+      { title: "Hyperparameter Tuning", filename: "documents/09_hyperparameter_tuning.md", content: hyperparameterTuning },
+      { title: "Deployment", filename: "documents/10_deployment.md", content: deployment },
+      { title: "Monitoring and Maintenance", filename: "documents/11_monitoring_maintenance.md", content: monitoring },
+      { title: "Iteration and Continuous Improvement", filename: "documents/12_iteration_continuous_improvement.md", content: iteration },
+    ],
+  },
+  {
+    group: "Audit Reference",
+    docs: [
+      { title: "Research Knowledge Base", filename: "documents/README.md", content: readme },
+      { title: "Research Notes", filename: "documents/research_notes.md", content: researchNotes },
+      { title: "Experiment Matrix", filename: "documents/experiment_matrix.md", content: experimentMatrix },
+      { title: "Dataset", filename: "documents/dataset.md", content: dataset },
+      { title: "Commands", filename: "documents/commands.md", content: commands },
+    ],
+  },
+];
+
+export const FLAT_RESEARCH_DOCUMENTS = RESEARCH_DOCUMENTS.flatMap((section) => section.docs);
 
 ----------------------------------------
 
