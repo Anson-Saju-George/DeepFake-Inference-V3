@@ -4,7 +4,7 @@ import { useSystemStatus } from "../hooks/useSystemStatus";
 import { FALLBACK_INFERENCE_MODELS } from "../models/inferenceModels";
 import { Upload, Cpu, Zap, AlertCircle, Lock, Image as ImageIcon, Video } from "lucide-react";
 
-const API = "/deepfake/api";
+const API = "/api";
 const VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"];
 
 const getFileDomain = (file) => {
@@ -15,7 +15,7 @@ const getFileDomain = (file) => {
 };
 
 export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
-  const { system, isOnline } = useSystemStatus();
+  const { system, isOnline, checked } = useSystemStatus();
   const [file, setFile] = useState(null);
   const [models, setModels] = useState(FALLBACK_INFERENCE_MODELS);
   const [model, setModel] = useState(FALLBACK_INFERENCE_MODELS[0].key);
@@ -169,18 +169,24 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
           <motion.div 
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            className="flex items-center gap-6 rounded-2xl border border-white bg-white/50 px-6 py-3 shadow-sm backdrop-blur-sm"
+            className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 rounded-2xl border border-white bg-white/50 px-6 py-3 shadow-sm backdrop-blur-sm"
           >
             <div className="flex items-center gap-2">
-              <div className={`h-2 w-2 rounded-full ${isOnline ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`} />
+              <div className={`h-2 w-2 rounded-full ${
+                isOnline ? 'bg-green-500 animate-pulse' : checked ? 'bg-red-500' : 'bg-gray-400'
+              }`} />
               <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">
-                {isOnline ? 'Cluster Online' : 'Cluster Offline'}
+                {isOnline ? 'Cluster Online' : checked ? 'Cluster Offline' : 'Sign In To Check Status'}
               </span>
             </div>
-            <div className="h-4 w-px bg-gray-200" />
-            <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest truncate max-w-[280px]">
-              Engine: <span className="text-cyan-600">{isOnline && system ? system.gpu : 'UNREACHABLE'}</span>
-            </div>
+            {checked && (
+              <>
+                <div className="h-4 w-px bg-gray-200" />
+                <div className="text-[10px] font-bold text-gray-600 uppercase tracking-widest truncate max-w-[280px]">
+                  Engine: <span className="text-cyan-600">{isOnline && system ? system.gpu : 'UNREACHABLE'}</span>
+                </div>
+              </>
+            )}
             {isOnline && system && system.queue > 0 && (
               <>
                 <div className="h-4 w-px bg-gray-200" />
@@ -225,7 +231,7 @@ export const LiveDemo = ({ user, onAuthRequired, onUpdateUser }) => {
                   );
                 })}
               </div>
-              <div className="space-y-3">
+              <div className="max-h-[22rem] space-y-3 overflow-y-auto pr-1">
                 {activeModels.map((m) => (
                   <button
                     key={m.key}

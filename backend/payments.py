@@ -1,8 +1,18 @@
 import razorpay
 import os
+import logging
 
-RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "rzp_test_your_id")
-RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "your_secret")
+logger = logging.getLogger("DF-PAYMENTS")
+ALLOW_TEST_PAYMENTS = os.environ.get("ALLOW_TEST_PAYMENTS", "").strip().lower() == "true"
+RAZORPAY_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "").strip()
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
+
+if not RAZORPAY_KEY_ID or not RAZORPAY_KEY_SECRET:
+    if not ALLOW_TEST_PAYMENTS:
+        raise RuntimeError("RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET must be set before starting the application")
+    logger.warning("ALLOW_TEST_PAYMENTS=true: using Razorpay test placeholders; payments are not production-safe")
+    RAZORPAY_KEY_ID = RAZORPAY_KEY_ID or "rzp_test_your_id"
+    RAZORPAY_KEY_SECRET = RAZORPAY_KEY_SECRET or "your_secret"
 
 client = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET))
 

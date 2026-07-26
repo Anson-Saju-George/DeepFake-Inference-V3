@@ -18,49 +18,13 @@ def _read_json(path):
         return {}
 
 
-def _score_from_filename(filename):
-    match = re.search(r"_f1-([0-9.]+)\.pth$", filename)
-    if not match:
-        return None
-    try:
-        return float(match.group(1))
-    except ValueError:
-        return None
+# Real Hugging Face export layout (Anson-Saju-George/deepfake-model-weights):
+#   models/<domain>/<Family>_<model_name>/<experiment_id>/{best.pth, config.json, final_summary.json}
+# best.pth carries no score in its filename; score comes from final_summary.json/config.json.
 
-
-def _best_checkpoint(model_dir):
-    best = None
-    for filename in os.listdir(model_dir):
-        if not filename.startswith("best_") or not filename.endswith(".pth"):
-            continue
-        score = _score_from_filename(filename)
-        candidate = {
-            "path": os.path.join(model_dir, filename),
-            "filename": filename,
-            "score": score if score is not None else -1.0,
-        }
-        if best is None or candidate["score"] > best["score"]:
-            best = candidate
-    return best
-
-
-def _load_model_metadata(model_dir):
-    config = {}
-    summary = {}
-
-    for filename in os.listdir(model_dir):
-        path = os.path.join(model_dir, filename)
-        if filename.startswith("config_") and filename.endswith(".json"):
-            config = _read_json(path)
-        elif filename.startswith("final_summary_") and filename.endswith(".json"):
-            payload = _read_json(path)
-            metrics = payload.get("test_metrics", {})
-            current_score = metrics.get("f1", payload.get("best_val_f1", -1.0))
-            previous_metrics = summary.get("test_metrics", {})
-            previous_score = previous_metrics.get("f1", summary.get("best_val_f1", -1.0))
-            if not summary or current_score > previous_score:
-                summary = payload
-
+def _load_model_metadata(experiment_dir):
+    config = _read_json(os.path.join(experiment_dir, "config.json"))
+    summary = _read_json(os.path.join(experiment_dir, "final_summary.json"))
     return config, summary
 
 
@@ -72,25 +36,21 @@ def _discover_domain_models(domain):
     if not os.path.isdir(base_path):
         return available
 
-    for dirname in sorted(os.listdir(base_path)):
-        model_dir = os.path.join(base_path, dirname)
-        if not os.path.isdir(model_dir):
+    for root, _dirs, files in os.walk(base_path):
+        if "best.pth" not in files:
             continue
 
-        checkpoint = _best_checkpoint(model_dir)
-        if not checkpoint:
-            continue
-
-        config, summary = _load_model_metadata(model_dir)
+        config, summary = _load_model_metadata(root)
         metrics = summary.get("test_metrics", {})
         model_name = config.get("model_name") or summary.get("model_name")
         if not model_name:
             continue
 
-        family = config.get("family") or dirname.split("_", 1)[0]
+        experiment_no = summary.get("experiment_no") or config.get("experiment_no") or os.path.basename(root)
+        family = config.get("family") or os.path.basename(os.path.dirname(root)).split("_", 1)[0]
         mode = config.get("mode") or ("single" if domain == "video" else "image")
         category = config.get("category") or domain
-        key = f"{domain}_{_slug(dirname)}"
+        key = f"{domain}_{_slug(experiment_no)}"
 
         available[key] = {
             "key": key,
@@ -98,14 +58,14 @@ def _discover_domain_models(domain):
             "label": f"{family} {model_name}".replace("_", " "),
             "family": family,
             "model_name": model_name,
-            "path": checkpoint["path"],
-            "checkpoint": checkpoint["filename"],
-            "score": metrics.get("f1", summary.get("best_val_f1", checkpoint["score"])),
+            "path": os.path.join(root, "best.pth"),
+            "checkpoint": "best.pth",
+            "score": metrics.get("f1", summary.get("best_val_f1", -1.0)),
             "accuracy": metrics.get("acc", summary.get("best_val_acc")),
             "mode": mode,
             "category": category,
             "seq_len": int(config.get("seq_len") or (8 if mode == "sequence" else 1)),
-            "experiment_no": summary.get("experiment_no") or config.get("experiment_no"),
+            "experiment_no": experiment_no,
             "dataset_scope": summary.get("dataset_scope") or config.get("dataset_scope"),
             "description": config.get("what_it_tests") or config.get("description") or "",
         }

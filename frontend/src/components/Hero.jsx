@@ -3,21 +3,8 @@ import { motion } from 'framer-motion';
 import { useSystemStatus } from '../hooks/useSystemStatus';
 import { Activity } from 'lucide-react';
 
-const heroModels = [
-  {
-    name: "Image Detector",
-    tag: "98.63% ACC",
-    desc: "ConvNeXt-Base on image_combined with 0.9863 F1 for synthetic image detection."
-  },
-  {
-    name: "Video Detector",
-    tag: "90.89% ACC",
-    desc: "ConvNeXt Hybrid/Sequence on video_combined with 0.7841 F1 across raw clips."
-  },
-];
-
 export const Hero = () => {
-  const { system, isOnline } = useSystemStatus();
+  const { system, isOnline, checked } = useSystemStatus();
 
   const containerVariants = {
     hidden: { opacity: 0 },
@@ -64,7 +51,12 @@ export const Hero = () => {
             <span className="relative z-10 bg-gradient-to-r from-cyan-300 via-blue-400 to-indigo-500 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(34,211,238,0.3)]">
               Unseen.
             </span>
-            <svg className="absolute -bottom-2 left-0 w-full" height="12" viewBox="0 0 600 12" fill="none">
+            <motion.svg
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.01, delay: 0.79 }}
+              className="absolute -bottom-2 left-0 w-full" height="12" viewBox="0 0 600 12" fill="none"
+            >
               <motion.path
                 initial={{ pathLength: 0 }}
                 animate={{ pathLength: 1 }}
@@ -81,7 +73,7 @@ export const Hero = () => {
                   <stop offset="1" stopColor="#3b82f6" />
                 </linearGradient>
               </defs>
-            </svg>
+            </motion.svg>
           </span>
         </motion.h1>
 
@@ -106,8 +98,10 @@ export const Hero = () => {
           <div className="space-y-1">
             <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Cluster Status</span>
             <div className="flex items-center gap-2 font-mono text-sm text-white">
-              <div className={`h-1.5 w-1.5 rounded-full shadow-[0_0_8px_rgba(6,182,212,1)] ${isOnline ? 'bg-cyan-500 animate-pulse' : 'bg-red-500'}`}></div>
-              {isOnline ? 'SYSTEM_ONLINE' : 'UNREACHABLE'}
+              <div className={`h-1.5 w-1.5 rounded-full shadow-[0_0_8px_rgba(6,182,212,1)] ${
+                isOnline ? 'bg-cyan-500 animate-pulse' : checked ? 'bg-red-500' : 'bg-gray-500'
+              }`}></div>
+              {isOnline ? 'SYSTEM_ONLINE' : checked ? 'UNREACHABLE' : 'SIGN_IN_TO_CHECK'}
             </div>
           </div>
           <div className="space-y-1">
@@ -121,31 +115,10 @@ export const Hero = () => {
           <div className="space-y-1">
             <span className="text-[10px] font-bold tracking-[0.2em] text-gray-500 uppercase">Engine Node</span>
             <div className="font-mono text-sm text-white truncate max-w-[200px] md:max-w-none">
-              {isOnline && system ? system.gpu : 'OFFLINE'}
+              {isOnline && system ? system.gpu : checked ? 'UNREACHABLE' : 'SIGN IN TO VIEW'}
             </div>
           </div>
         </motion.div>
-      </motion.div>
-
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: 1.2, duration: 1 }}
-        className="relative z-10 mt-20 grid grid-cols-1 md:grid-cols-2 gap-8 w-full max-w-4xl"
-      >
-        {heroModels.map((item, i) => (
-          <div key={i} className="group flex min-h-[170px] flex-col items-start justify-between gap-6 rounded-2xl border border-white/5 bg-white/[0.02] p-8 text-left backdrop-blur-md transition-all hover:border-cyan-500/20 hover:bg-white/[0.04]">
-            <div className="flex w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <h3 className="font-Sora text-xl font-bold text-white transition-colors group-hover:text-cyan-400">{item.name}</h3>
-              <span className="shrink-0 rounded-full border border-cyan-400/20 bg-cyan-400/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-cyan-300">
-                {item.tag}
-              </span>
-            </div>
-            <p className="max-w-[34rem] text-sm font-medium leading-7 text-gray-400 md:text-[15px]">
-              {item.desc}
-            </p>
-          </div>
-        ))}
       </motion.div>
     </section>
   );

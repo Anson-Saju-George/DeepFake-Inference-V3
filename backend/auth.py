@@ -11,10 +11,14 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 
 # Load env
-SECRET_KEY = os.environ.get("JWT_SECRET", "fallback-secret-for-dev")
+SECRET_KEY = os.environ.get("JWT_SECRET", "").strip()
+if not SECRET_KEY:
+    raise RuntimeError("JWT_SECRET must be set before starting the application")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 1 day
-GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_ID = os.environ.get("GOOGLE_CLIENT_ID", "").strip()
+if not GOOGLE_CLIENT_ID:
+    raise RuntimeError("GOOGLE_CLIENT_ID must be set before starting the application")
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login", auto_error=False)
 

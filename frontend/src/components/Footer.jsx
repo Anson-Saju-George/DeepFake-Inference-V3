@@ -1,4 +1,4 @@
-import logoIcon from '../../images/Logo/DF_Cropped_Logo_Icon.png';
+import logoIcon from '../../../images/Logo/DF_Cropped_Logo_Icon.png';
 
 const resources = [
   {
@@ -33,7 +33,6 @@ export const Footer = () => (
           <div className="space-y-4">
             <h5 className="text-xs font-bold text-[#0A0A0A] uppercase tracking-widest">Platform</h5>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><a href="#pipeline" className="transition-colors hover:text-cyan-500">Pipeline</a></li>
               <li><a href="#architecture" className="transition-colors hover:text-cyan-500">Architecture</a></li>
               <li><a href="#benchmarks" className="transition-colors hover:text-cyan-500">Benchmarks</a></li>
               <li><a href="#demo" className="transition-colors hover:text-cyan-500">Live Demo</a></li>
@@ -63,7 +62,7 @@ export const Footer = () => (
         <p>Copyright 2026 DF-ENGINE Cluster. All rights reserved.</p>
         <div className="mt-4 flex gap-8 md:mt-0">
           <a href="#pricing" className="transition-colors hover:text-gray-600">Acquire Credits</a>
-          <a href="/deepfake/research" className="transition-colors hover:text-gray-600">Research Archive</a>
+          <a href="/research" className="transition-colors hover:text-gray-600">Research Archive</a>
         </div>
       </div>
     </div>

@@ -1,0 +1,13 @@
+node_modules
+frontend/node_modules
+__pycache__
+**/__pycache__
+.git
+docs/archive
+backend/models
+backend/storage/uploads/*
+*.pyc
+.env
+backend/.env
+backend/samples/*
+frontend/dist

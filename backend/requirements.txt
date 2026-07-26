@@ -6,6 +6,7 @@ python-multipart
 # Auth & security
 python-jose[cryptography]
 passlib[bcrypt]
+google-auth
 
 # Database
 sqlalchemy
@@ -16,11 +17,14 @@ python-dotenv
 
 # File handling / utils
 pillow
-opencv-python
+opencv-python-headless
 numpy
 
 # Payments
 razorpay
+
+# Model weight delivery
+huggingface_hub
 
 # Optional but recommended
 requests

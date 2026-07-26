@@ -8,8 +8,11 @@ import subprocess
 import sys
 import shutil
 from datetime import datetime, timedelta
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends, Form
+from fastapi import APIRouter, FastAPI, UploadFile, File, HTTPException, Request, Depends, Form, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -35,6 +38,7 @@ MIN_VRAM_MB = 1024
 INFERENCE_WORKER = os.path.join(BASE_DIR, "inference_worker.py")
 
 app = FastAPI(title="DF-ENGINE | Neural Inference API")
+router = APIRouter()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("DF-CLUSTER")
@@ -42,7 +46,7 @@ logger.info(f"MODEL_LOADER: {MODEL_LOADER_VERSION}")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[origin.strip() for origin in os.getenv("CORS_ORIGINS", "http://localhost:8000").split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -152,6 +156,7 @@ def worker_loop():
                 "vram_reserved": "0.00 MB",
                 "model_used": info["model_used"],
                 "model_label": inference.get("model_label", info["model_used"]),
+                "user_id": info["user_id"],
                 "domain": info["domain"],
                 "filename": info["filename"],
                 "timestamp": datetime.utcnow().isoformat()
@@ -163,14 +168,27 @@ def worker_loop():
             logger.info(f"✅ [WORKER] {job_id} Complete.")
 
         except Exception as e:
-            logger.error(f"❌ [WORKER] {job_id} Failed: {e}")
+            logger.error(f"[WORKER] {job_id} Failed: {e}")
             info = job_results.get(job_id, {})
+            if info.get("credit_deducted") and info.get("user_id") is not None:
+                db = database.SessionLocal()
+                try:
+                    user = db.query(models.User).filter(models.User.id == info["user_id"]).first()
+                    if user:
+                        if info.get("is_video"):
+                            user.credits_video_used = max(0, user.credits_video_used - 1)
+                        else:
+                            user.credits_image_used = max(0, user.credits_image_used - 1)
+                        db.commit()
+                finally:
+                    db.close()
             job_results[job_id] = {
                 "job_id": job_id,
                 "error": str(e),
                 "model_used": info.get("model_used"),
                 "domain": info.get("domain"),
                 "filename": info.get("filename"),
+                "user_id": info.get("user_id"),
                 "timestamp": datetime.utcnow().isoformat(),
             }
             if info.get("path") and os.path.exists(info["path"]):
@@ -203,20 +221,8 @@ async def log_requests(request: Request, call_next):
 
 # --- ENDPOINTS ---
 
-@app.post("/auth/dev-login")
-async def dev_login(email: str, db: Session = Depends(database.get_db)):
-    if email not in ADMIN_EMAILS: raise HTTPException(status_code=403)
-    user = db.query(models.User).filter(models.User.email == email).first()
-    if not user:
-        user = models.User(email=email, role="admin", credits_image_total=5, credits_video_total=3)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-    token = auth.create_access_token(data={"sub": user.email})
-    return {"access_token": token, "token_type": "bearer"}
-
-@app.post("/auth/google")
-async def google_auth(token: str, db: Session = Depends(database.get_db)):
+@router.post("/auth/google")
+async def google_auth(token: str = Body(..., embed=True), db: Session = Depends(database.get_db)):
     user_info = auth.verify_google_token(token)
     if not user_info: raise HTTPException(status_code=401)
     email = user_info["email"]
@@ -230,7 +236,7 @@ async def google_auth(token: str, db: Session = Depends(database.get_db)):
     access_token = auth.create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "role": user.role, "email": user.email}
 
-@app.get("/users/me")
+@router.get("/users/me")
 async def read_users_me(current_user: models.User = Depends(auth.get_current_user)):
     return {
         "email": current_user.email, "role": current_user.role,
@@ -240,8 +246,10 @@ async def read_users_me(current_user: models.User = Depends(auth.get_current_use
         }
     }
 
-@app.get("/system/status")
-async def system_status():
+@router.get("/system/status")
+async def system_status(current_user: models.User = Depends(auth.get_current_user)):
+    if current_user.role != "admin":
+        return {"status": "online"}
     gpu = get_gpu_info()
     return {
         "status": "online",
@@ -253,11 +261,11 @@ async def system_status():
         "vram_reserved": f"{gpu['used_mb']:.2f} MB",
     }
 
-@app.get("/models")
+@router.get("/models")
 async def list_models():
     return {"models": get_public_models()}
 
-@app.post("/predict")
+@router.post("/predict")
 async def run_prediction(model_name: str, file: UploadFile = File(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
     # 1. Validation
     meta = validate_file(file)
@@ -288,16 +296,26 @@ async def run_prediction(model_name: str, file: UploadFile = File(...), current_
     with open(path, "wb") as buffer: buffer.write(content)
 
     job_status[job_id] = "queued"
-    job_results[job_id] = {"model_used": resolved_model_name, "domain": domain, "path": path, "is_video": is_video, "filename": file.filename}
+    job_results[job_id] = {
+        "model_used": resolved_model_name,
+        "domain": domain,
+        "path": path,
+        "is_video": is_video,
+        "filename": file.filename,
+        "user_id": current_user.id,
+        "credit_deducted": current_user.role != "admin",
+    }
     
     with queue_lock:
         job_queue.append(job_id)
 
     return {"job_id": job_id, "status": "queued"}
 
-@app.get("/status/{job_id}")
-async def get_job_status(job_id: str):
+@router.get("/status/{job_id}")
+async def get_job_status(job_id: str, current_user: models.User = Depends(auth.get_current_user)):
     if job_id not in job_status: raise HTTPException(status_code=404)
+    if job_results.get(job_id, {}).get("user_id") != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=404)
     return {
         "status": job_status[job_id],
         "result": job_results[job_id] if job_status[job_id] == "done" else None,
@@ -305,8 +323,14 @@ async def get_job_status(job_id: str):
     }
 
 # --- PAYMENTS ---
-@app.post("/payments/create-order")
-async def create_payment_order(category: str, quantity: int, amount: float, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
+@router.post("/payments/create-order")
+async def create_payment_order(category: str, quantity: int, current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
+    amount = {
+        "image": {5: 50, 25: 200, 100: 700},
+        "video": {3: 60, 15: 250, 50: 800},
+    }.get(category, {}).get(quantity)
+    if amount is None or quantity <= 0:
+        raise HTTPException(status_code=400, detail="Unknown category or quantity")
     try:
         order = payments.create_order(amount)
         new_tx = models.Transaction(user_id=current_user.id, razorpay_order_id=order['id'], amount=amount, category=category, credits_added=quantity, status="pending")
@@ -316,11 +340,14 @@ async def create_payment_order(category: str, quantity: int, amount: float, curr
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/payments/verify")
+@router.post("/payments/verify")
 async def verify_payment(order_id: str = Form(...), payment_id: str = Form(...), signature: str = Form(...), current_user: models.User = Depends(auth.get_current_user), db: Session = Depends(database.get_db)):
-    valid = (signature == "simulator_valid_sig") or payments.verify_payment(order_id, payment_id, signature)
+    valid = payments.verify_payment(order_id, payment_id, signature)
     if valid:
-        tx = db.query(models.Transaction).filter(models.Transaction.razorpay_order_id == order_id).first()
+        tx = db.query(models.Transaction).filter(
+            models.Transaction.razorpay_order_id == order_id,
+            models.Transaction.user_id == current_user.id,
+        ).first()
         if tx and tx.status == "pending":
             tx.status = "completed"
             tx.razorpay_payment_id = payment_id
@@ -330,6 +357,28 @@ async def verify_payment(order_id: str = Form(...), payment_id: str = Form(...),
             db.commit()
             return {"message": "Success"}
     raise HTTPException(status_code=400, detail="Payment verification failed")
+
+app.include_router(router, prefix="/api")
+
+
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        if path == "api" or path.startswith("api/"):
+            raise StarletteHTTPException(status_code=404)
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+            return FileResponse(os.path.join(self.directory, "index.html"))
+
+
+FRONTEND_DIST = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "dist"))
+if os.path.isdir(FRONTEND_DIST):
+    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+else:
+    logger.warning("Frontend build directory is missing; static serving is disabled")
+
 
 if __name__ == "__main__":
     import uvicorn

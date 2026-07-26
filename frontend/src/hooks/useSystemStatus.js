@@ -1,15 +1,25 @@
 import { useState, useEffect } from "react";
 
-const API = "/deepfake/api";
+const API = "/api";
 
 export const useSystemStatus = () => {
   const [system, setSystem] = useState(null);
   const [isOnline, setIsOnline] = useState(false);
+  const [checked, setChecked] = useState(false);
 
   useEffect(() => {
     const fetchStatus = async () => {
+      const token = localStorage.getItem("token");
+      if (!token) {
+        setSystem(null);
+        setIsOnline(false);
+        setChecked(false);
+        return;
+      }
       try {
-        const res = await fetch(`${API}/system/status`);
+        const res = await fetch(`${API}/system/status`, {
+          headers: { "Authorization": `Bearer ${token}` }
+        });
         if (res.ok) {
           const data = await res.json();
           setSystem(data);
@@ -21,6 +31,8 @@ export const useSystemStatus = () => {
       } catch {
         setSystem(null);
         setIsOnline(false);
+      } finally {
+        setChecked(true);
       }
     };
 
@@ -29,5 +41,7 @@ export const useSystemStatus = () => {
     return () => clearInterval(interval);
   }, []);
 
-  return { system, isOnline };
+  // checked=false means we never attempted a real check (no auth token yet) —
+  // that's not the same as a confirmed offline cluster.
+  return { system, isOnline, checked };
 };

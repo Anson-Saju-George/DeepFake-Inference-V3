@@ -1,0 +1,20 @@
+services:
+  df-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+    env_file:
+      - .env
+    volumes:
+      - ./backend/models:/app/backend/models
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

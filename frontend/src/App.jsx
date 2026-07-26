@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, Suspense, lazy } from 'react'
 import { GoogleOAuthProvider } from '@react-oauth/google'
 import { Navbar } from './components/Navbar'
 import { Hero } from './components/Hero'
-import { Pipeline } from './components/Pipeline'
-import { Setup } from './components/Setup'
 import { Architecture } from './components/Architecture'
 import { Benchmarks } from './components/Benchmarks'
 import { LiveDemo } from './components/LiveDemo'
 import { Pricing } from './components/Pricing'
 import { Footer } from './components/Footer'
 import { AuthModal } from './components/AuthModal'
-import { Research } from './components/Research'
 
-const GOOGLE_CLIENT_ID = "771999870087-il14aouajsabcfmmin80t1hbkl6dhvu6.apps.googleusercontent.com"
+const Research = lazy(() => import('./components/Research').then((m) => ({ default: m.Research })))
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 
 const getAppRoute = (pathname) => {
   const basePath = import.meta.env.BASE_URL.replace(/\/+$/, "");
@@ -38,7 +37,7 @@ function App() {
     }
 
     try {
-      const res = await fetch("/deepfake/api/users/me", {
+      const res = await fetch("/api/users/me", {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok) {
@@ -71,12 +70,16 @@ function App() {
           onLoginClick={() => setIsAuthModalOpen(true)} 
         />
         {isResearchRoute ? (
-          <Research />
+          <Suspense fallback={
+            <div className="flex min-h-screen items-center justify-center bg-[#F7F9FC]">
+              <div className="h-8 w-8 animate-spin rounded-full border-2 border-cyan-500 border-t-transparent" />
+            </div>
+          }>
+            <Research />
+          </Suspense>
         ) : (
           <>
             <Hero />
-            <Pipeline />
-            <Setup />
             <Architecture />
             <Benchmarks />
             <LiveDemo user={user} onAuthRequired={() => setIsAuthModalOpen(true)} onUpdateUser={fetchUser} />
