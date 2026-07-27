@@ -11,7 +11,7 @@ export const AuthModal = ({ isOpen, onClose, onLoginSuccess }) => {
     setError("");
     setLoading(true);
     try {
-      const res = await fetch(`/api/auth/google`, {
+      const res = await fetch(`/deepfake-detection/api/auth/google`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token: credentialResponse.credential })

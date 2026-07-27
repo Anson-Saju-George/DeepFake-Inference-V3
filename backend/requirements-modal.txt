@@ -1,0 +1,26 @@
+# Slim API/static image deps for DEEPFAKE_MODE=modal. No torch/timm/opencv/cuda -
+# real inference happens on Modal; this process only dispatches and polls.
+
+# FastAPI stack
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Auth & security
+python-jose[cryptography]
+google-auth
+
+# Database
+sqlalchemy
+
+# Env
+python-dotenv
+
+# Payments
+razorpay
+
+# Modal client
+modal
+
+# Optional but recommended
+requests

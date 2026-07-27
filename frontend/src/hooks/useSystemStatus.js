@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 
-const API = "/api";
+const API = "/deepfake-detection/api";
 
 export const useSystemStatus = () => {
   const [system, setSystem] = useState(null);

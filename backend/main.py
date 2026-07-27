@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from model_catalog import MODEL_LOADER_VERSION, get_public_models, resolve_model_key
+from inference import dispatch as dispatch_inference, poll as poll_modal_call
 import models
 import auth
 import database
@@ -33,7 +34,9 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Persistence Config
 AUTO_PURGE_AFTER = 60 * 10 
 IDLE_TIMEOUT = 60 * 5      
-ADMIN_EMAILS = ["ansonsaju007@gmail.com"]
+ADMIN_EMAILS = [
+    email.strip() for email in os.getenv("ADMIN_EMAILS", "ansonsaju007@gmail.com").split(",") if email.strip()
+]
 MIN_VRAM_MB = 1024
 INFERENCE_WORKER = os.path.join(BASE_DIR, "inference_worker.py")
 
@@ -59,6 +62,8 @@ models.Base.metadata.create_all(bind=database.engine)
 job_queue = []
 job_status = {}  # job_id -> status
 job_results = {} # job_id -> result or config
+job_backend = {}  # job_id -> "modal" | "local"
+job_modal_call_id = {}  # job_id -> Modal FunctionCall id
 
 queue_lock = threading.Lock()
 
@@ -128,72 +133,117 @@ def run_isolated_inference(info):
         raise RuntimeError(detail)
     return json.loads(result.stdout.strip().splitlines()[-1])
 
+def refund_credit(info):
+    if not (info.get("credit_deducted") and info.get("user_id") is not None):
+        return
+    db = database.SessionLocal()
+    try:
+        user = db.query(models.User).filter(models.User.id == info["user_id"]).first()
+        if user:
+            if info.get("is_video"):
+                user.credits_video_used = max(0, user.credits_video_used - 1)
+            else:
+                user.credits_image_used = max(0, user.credits_image_used - 1)
+            db.commit()
+    finally:
+        db.close()
+
+
+def mark_job_done(job_id, info, inference):
+    job_results[job_id] = {
+        "job_id": job_id,
+        "label": inference["label"],
+        "confidence": inference["confidence"],
+        "vram_peak": inference["vram_peak"],
+        "vram_reserved": "0.00 MB",
+        "model_used": info["model_used"],
+        "model_label": inference.get("model_label", info["model_used"]),
+        "user_id": info["user_id"],
+        "domain": info["domain"],
+        "filename": info["filename"],
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    job_status[job_id] = "done"
+    if os.path.exists(info.get("path", "")):
+        os.remove(info["path"])
+
+
+def mark_job_failed(job_id, info, error):
+    logger.error(f"[WORKER] {job_id} Failed: {error}")
+    refund_credit(info)
+    job_results[job_id] = {
+        "job_id": job_id,
+        "error": str(error),
+        "model_used": info.get("model_used"),
+        "domain": info.get("domain"),
+        "filename": info.get("filename"),
+        "user_id": info.get("user_id"),
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    if info.get("path") and os.path.exists(info["path"]):
+        os.remove(info["path"])
+    job_status[job_id] = "failed"
+
+
+def refresh_modal_job(job_id):
+    if job_backend.get(job_id) != "modal":
+        return
+    if job_status.get(job_id) in {"done", "failed"}:
+        return
+
+    call_id = job_modal_call_id.get(job_id)
+    if not call_id:
+        return
+
+    state, payload = poll_modal_call(call_id)
+    if state == "running":
+        job_status[job_id] = "processing"
+        return
+
+    info = job_results.get(job_id, {})
+    if state == "done":
+        mark_job_done(job_id, info, payload)
+        logger.info(f"✅ [WORKER] {job_id} Complete (Modal).")
+    else:
+        mark_job_failed(job_id, info, payload)
+
+
 # --- BACKGROUND WORKER ---
 def worker_loop():
     while True:
         job_id = None
         with queue_lock:
             if job_queue: job_id = job_queue.pop(0)
-        
+
         if not job_id:
             time.sleep(1)
             continue
 
+        info = job_results[job_id] # Temporarily contains path/config
         try:
             job_status[job_id] = "processing"
-            info = job_results[job_id] # Temporarily contains path/config
-            
             logger.info(f"⚡ [WORKER] Processing {job_id} ({info['filename']})")
-            
+
+            with open(info["path"], "rb") as f:
+                media_bytes = f.read()
+            backend_kind, call_id = dispatch_inference(
+                job_id, media_bytes, info["model_used"], info["domain"], info["is_video"]
+            )
+            job_backend[job_id] = backend_kind
+
+            if backend_kind == "modal":
+                if not call_id:
+                    raise RuntimeError("Modal dispatch returned no call_id")
+                job_modal_call_id[job_id] = call_id
+                logger.info(f"⚡ [WORKER] Dispatched Modal job {job_id}: {call_id}")
+                continue
+
             inference = run_isolated_inference(info)
-            
-            # Store final result
-            job_results[job_id] = {
-                "job_id": job_id,
-                "label": inference["label"],
-                "confidence": inference["confidence"],
-                "vram_peak": inference["vram_peak"],
-                "vram_reserved": "0.00 MB",
-                "model_used": info["model_used"],
-                "model_label": inference.get("model_label", info["model_used"]),
-                "user_id": info["user_id"],
-                "domain": info["domain"],
-                "filename": info["filename"],
-                "timestamp": datetime.utcnow().isoformat()
-            }
-            job_status[job_id] = "done"
-            
-            # Cleanup storage
-            if os.path.exists(info["path"]): os.remove(info["path"])
+            mark_job_done(job_id, info, inference)
             logger.info(f"✅ [WORKER] {job_id} Complete.")
 
         except Exception as e:
-            logger.error(f"[WORKER] {job_id} Failed: {e}")
-            info = job_results.get(job_id, {})
-            if info.get("credit_deducted") and info.get("user_id") is not None:
-                db = database.SessionLocal()
-                try:
-                    user = db.query(models.User).filter(models.User.id == info["user_id"]).first()
-                    if user:
-                        if info.get("is_video"):
-                            user.credits_video_used = max(0, user.credits_video_used - 1)
-                        else:
-                            user.credits_image_used = max(0, user.credits_image_used - 1)
-                        db.commit()
-                finally:
-                    db.close()
-            job_results[job_id] = {
-                "job_id": job_id,
-                "error": str(e),
-                "model_used": info.get("model_used"),
-                "domain": info.get("domain"),
-                "filename": info.get("filename"),
-                "user_id": info.get("user_id"),
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            if info.get("path") and os.path.exists(info["path"]):
-                os.remove(info["path"])
-            job_status[job_id] = "failed"
+            mark_job_failed(job_id, info, e)
 
 threading.Thread(target=worker_loop, daemon=True).start()
 
@@ -316,6 +366,7 @@ async def get_job_status(job_id: str, current_user: models.User = Depends(auth.g
     if job_id not in job_status: raise HTTPException(status_code=404)
     if job_results.get(job_id, {}).get("user_id") != current_user.id and current_user.role != "admin":
         raise HTTPException(status_code=404)
+    refresh_modal_job(job_id)
     return {
         "status": job_status[job_id],
         "result": job_results[job_id] if job_status[job_id] == "done" else None,
@@ -358,7 +409,7 @@ async def verify_payment(order_id: str = Form(...), payment_id: str = Form(...),
             return {"message": "Success"}
     raise HTTPException(status_code=400, detail="Payment verification failed")
 
-app.include_router(router, prefix="/api")
+app.include_router(router, prefix="/deepfake-detection/api")
 
 
 class SPAStaticFiles(StaticFiles):
@@ -375,7 +426,7 @@ class SPAStaticFiles(StaticFiles):
 
 FRONTEND_DIST = os.path.abspath(os.path.join(BASE_DIR, "..", "frontend", "dist"))
 if os.path.isdir(FRONTEND_DIST):
-    app.mount("/", SPAStaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
+    app.mount("/deepfake-detection", SPAStaticFiles(directory=FRONTEND_DIST, html=True), name="frontend")
 else:
     logger.warning("Frontend build directory is missing; static serving is disabled")
 

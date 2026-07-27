@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      # DEEPFAKE_MODE is the mode switch in .env:
+      #   local-gpu -> backend-local-gpu (CUDA/Torch + HF weight pull)
+      #   modal     -> backend-modal (slim, no CUDA/Torch, dispatches to Modal)
+      target: backend-${DEEPFAKE_MODE:-local-gpu}
       args:
         VITE_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
     env_file:
@@ -15,6 +19,9 @@ services:
       resources:
         reservations:
           devices:
+            # Required for local-gpu mode only. Compose cannot conditionally remove
+            # this for a single service based on DEEPFAKE_MODE; move to an override
+            # file if a no-GPU Modal host rejects GPU reservations.
             - driver: nvidia
               count: all
               capabilities: [gpu]

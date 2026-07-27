@@ -25,7 +25,7 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
     const token = localStorage.getItem("token");
 
     try {
-      const res = await fetch(`/api/payments/create-order?category=${category}&quantity=${quantity}&amount=${amount}`, {
+      const res = await fetch(`/deepfake-detection/api/payments/create-order?category=${category}&quantity=${quantity}&amount=${amount}`, {
         method: "POST",
         headers: { "Authorization": `Bearer ${token}` }
       });
@@ -41,7 +41,7 @@ export const Pricing = ({ user, onAuthRequired, onUpdateUser }) => {
         description: `Acquire ${quantity} ${category.toUpperCase()} Credits`,
         order_id: order.id,
         handler: async function (response) {
-          const verifyRes = await fetch("/api/payments/verify", {
+          const verifyRes = await fetch("/deepfake-detection/api/payments/verify", {
             method: "POST",
             headers: {
               "Content-Type": "application/x-www-form-urlencoded",

@@ -37,7 +37,7 @@ function App() {
     }
 
     try {
-      const res = await fetch("/api/users/me", {
+      const res = await fetch("/deepfake-detection/api/users/me", {
         headers: { "Authorization": `Bearer ${token}` }
       });
       if (res.ok) {

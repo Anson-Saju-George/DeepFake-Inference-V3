@@ -1,11 +1,10 @@
 # FastAPI stack
-fastapi[all]
+fastapi
 uvicorn[standard]
 python-multipart
 
 # Auth & security
 python-jose[cryptography]
-passlib[bcrypt]
 google-auth
 
 # Database

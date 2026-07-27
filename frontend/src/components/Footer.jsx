@@ -62,7 +62,7 @@ export const Footer = () => (
         <p>Copyright 2026 DF-ENGINE Cluster. All rights reserved.</p>
         <div className="mt-4 flex gap-8 md:mt-0">
           <a href="#pricing" className="transition-colors hover:text-gray-600">Acquire Credits</a>
-          <a href="/research" className="transition-colors hover:text-gray-600">Research Archive</a>
+          <a href="/deepfake-detection/research" className="transition-colors hover:text-gray-600">Research Archive</a>
         </div>
       </div>
     </div>

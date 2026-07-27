@@ -4,7 +4,7 @@ import { useSystemStatus } from "../hooks/useSystemStatus";
 import { FALLBACK_INFERENCE_MODELS } from "../models/inferenceModels";
 import { Upload, Cpu, Zap, AlertCircle, Lock, Image as ImageIcon, Video } from "lucide-react";
 
-const API = "/api";
+const API = "/deepfake-detection/api";
 const VIDEO_EXTENSIONS = [".mp4", ".mov", ".avi", ".mkv", ".webm"];
 
 const getFileDomain = (file) => {
