@@ -11,6 +11,38 @@ LOCAL_BACKEND_DIR = Path(__file__).resolve().parent
 BACKEND_DIR = "/root/backend"
 MODELS_DIR = f"{BACKEND_DIR}/models"
 
+# Hugging Face is the single source of truth for weights (same repo the local-gpu
+# container's fetch_weights.py pulls). Modal syncs from it into the Volume on cold
+# start so the two runtimes can't drift.
+HF_REPO = "Anson-Saju-George/deepfake-model-weights"
+
+_weights_synced = False
+
+
+def _sync_weights_from_hf():
+    """Etag-verified pull from HF into the mounted Volume. Runs once per container:
+    downloads only missing/changed files (fast no-op when the Volume is current),
+    picking up any HF update automatically. Falls back to the cached Volume copy if
+    HF is unreachable so inference still serves."""
+    global _weights_synced
+    if _weights_synced:
+        return
+    try:
+        from huggingface_hub import snapshot_download
+        snapshot_download(
+            repo_id=HF_REPO,
+            repo_type="model",
+            local_dir=MODELS_DIR,
+            allow_patterns=["image/*", "video/*"],
+        )
+        try:
+            weights_vol.commit()
+        except Exception:
+            pass
+    except Exception as exc:
+        print(f"[weights] HF sync skipped ({exc}); serving from cached Volume copy.")
+    _weights_synced = True
+
 
 def ignore_backend_path(path):
     path = Path(path)
@@ -28,17 +60,19 @@ def ignore_backend_path(path):
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("libgl1", "libglib2.0-0")
-    .pip_install("torch==2.6.0", "timm==1.0.12", "opencv-python-headless", "numpy", "pillow")
+    .pip_install("torch==2.6.0", "timm==1.0.12", "opencv-python-headless", "numpy", "pillow", "huggingface_hub")
     .add_local_dir(str(LOCAL_BACKEND_DIR), BACKEND_DIR, copy=True, ignore=ignore_backend_path)
 )
 
 
-@app.function(gpu="T4", image=image, volumes={MODELS_DIR: weights_vol}, timeout=300)
+@app.function(gpu="T4", image=image, volumes={MODELS_DIR: weights_vol}, timeout=600)
 def classify(job_id: str, media_bytes: bytes, model_key: str, domain: str, is_video: bool) -> dict:
     import sys
     import tempfile
 
     import torch
+
+    _sync_weights_from_hf()  # HF is source of truth; sync into the Volume before loading.
 
     sys.path.insert(0, BACKEND_DIR)
     from core import load_model_by_name, predict, predict_video_temporal
