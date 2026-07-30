@@ -321,11 +321,7 @@ async def run_prediction(model_name: str, file: UploadFile = File(...), current_
     meta = validate_file(file)
     check_vram()
     is_video = meta["is_video"]
-    # Only image-domain single-frame classifiers are runtime-loadable (every video-domain
-    # checkpoint — temporal AND single-frame spatial — uses a custom head the plain-timm
-    # runtime can't build). So video detection frame-averages an image model; is_video still
-    # drives per-frame averaging vs single-image inference and the credit category.
-    domain = "image"
+    domain = "video" if is_video else "image"
 
     try:
         resolved_model_name = resolve_model_key(model_name, domain)

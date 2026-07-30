@@ -5,7 +5,7 @@ import sys
 
 import torch
 
-from core import load_model_by_name, predict, predict_video
+from core import load_model_by_name, predict, predict_video_temporal
 
 
 def main():
@@ -21,8 +21,8 @@ def main():
 
     model, config = load_model_by_name(args.model_key, domain=args.domain)
     if args.is_video:
-        # Frame-average the single-frame classifier over 20 sampled frames.
-        label, score = predict_video(model, args.path, num_frames=20)
+        # Temporal clip inference (sample seq_len frames -> one sequence forward pass).
+        label, score = predict_video_temporal(model, args.path, seq_len=config.get("seq_len", 4))
     else:
         label, score = predict(model, args.path)
 

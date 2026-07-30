@@ -41,7 +41,7 @@ def classify(job_id: str, media_bytes: bytes, model_key: str, domain: str, is_vi
     import torch
 
     sys.path.insert(0, BACKEND_DIR)
-    from core import load_model_by_name, predict, predict_video
+    from core import load_model_by_name, predict, predict_video_temporal
 
     suffix = ".mp4" if is_video else ".jpg"
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
@@ -53,8 +53,8 @@ def classify(job_id: str, media_bytes: bytes, model_key: str, domain: str, is_vi
 
     model, config = load_model_by_name(model_key, domain=domain)
     if is_video:
-        # Frame-average the single-frame classifier over 20 sampled frames.
-        label, score = predict_video(model, media_path, num_frames=20)
+        # Temporal clip inference (sample seq_len frames -> one sequence forward pass).
+        label, score = predict_video_temporal(model, media_path, seq_len=config.get("seq_len", 4))
     else:
         label, score = predict(model, media_path)
 
