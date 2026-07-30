@@ -21,7 +21,8 @@ def main():
 
     model, config = load_model_by_name(args.model_key, domain=args.domain)
     if args.is_video:
-        label, score = predict_video(model, args.path, num_frames=config.get("seq_len", 20))
+        # Frame-average the single-frame classifier over 20 sampled frames.
+        label, score = predict_video(model, args.path, num_frames=20)
     else:
         label, score = predict(model, args.path)
 

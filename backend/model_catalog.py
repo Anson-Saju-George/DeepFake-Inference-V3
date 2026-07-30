@@ -49,6 +49,12 @@ def _discover_domain_models(domain):
         experiment_no = summary.get("experiment_no") or config.get("experiment_no") or os.path.basename(root)
         family = config.get("family") or os.path.basename(os.path.dirname(root)).split("_", 1)[0]
         mode = config.get("mode") or ("single" if domain == "video" else "image")
+        # Temporal models (TCN/LSTM/ConvLSTM/Transformer heads over a sequence of frames)
+        # need their custom architecture to load; the runtime only builds single-frame timm
+        # classifiers. Skip them so only runtime-loadable models are ever offered/selected.
+        # They remain documented in the research writeup with their reported metrics.
+        if mode == "sequence":
+            continue
         category = config.get("category") or domain
         key = f"{domain}_{_slug(experiment_no)}"
 
@@ -74,10 +80,13 @@ def _discover_domain_models(domain):
 
 
 def get_available_models(domain=None):
+    # Only image-domain single-frame classifiers are runtime-loadable. Every video-domain
+    # checkpoint (temporal TCN/LSTM heads AND single-frame spatial variants) uses a custom
+    # classifier head the plain-timm runtime can't build, so those are never offered;
+    # video detection frame-averages an image model instead. The `domain` argument is kept
+    # for call-site compatibility, but the offerable set is always the image models.
     available = {}
-    domains = [domain] if domain else ["image", "video"]
-    for item in domains:
-        available.update(_discover_domain_models(item))
+    available.update(_discover_domain_models("image"))
     return available
 
 
