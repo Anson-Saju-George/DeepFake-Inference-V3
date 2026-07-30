@@ -37,7 +37,11 @@ def _discover_domain_models(domain):
         return available
 
     for root, _dirs, files in os.walk(base_path):
-        if "best.pth" not in files:
+        # Discover by metadata, not the weight file. In modal mode the web container holds
+        # only config.json/final_summary.json (weights live on Modal), so keying off
+        # config.json lets it build the catalog; best.pth still names the (Modal-side)
+        # weight for the loader, and local-gpu has both files present anyway.
+        if "config.json" not in files:
             continue
 
         config, summary = _load_model_metadata(root)

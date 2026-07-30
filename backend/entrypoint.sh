@@ -13,7 +13,8 @@ is_truthy() {
 }
 
 if is_truthy "$INFERENCE_BACKEND_MODAL" && ! is_truthy "$FALLBACK_TO_LOCAL"; then
-  echo "Modal-only mode: skipping local weight download (real inference runs on Modal)."
+  echo "Modal mode: fetching model metadata only (weights served by Modal)."
+  python fetch_weights.py --metadata-only
 else
   python fetch_weights.py
 fi

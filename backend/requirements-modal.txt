@@ -22,5 +22,8 @@ razorpay
 # Modal client
 modal
 
+# Pull model metadata (config.json) from Hugging Face so the catalog builds in modal mode
+huggingface_hub
+
 # Optional but recommended
 requests

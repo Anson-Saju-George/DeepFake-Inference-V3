@@ -30,7 +30,8 @@ RUN python -m pip install --upgrade pip \
     && python -m pip install --no-cache-dir -r requirements-modal.txt
 
 COPY backend/main.py backend/auth.py backend/database.py backend/models.py backend/payments.py \
-     backend/validator.py backend/model_catalog.py backend/inference.py backend/entrypoint.sh ./
+     backend/validator.py backend/model_catalog.py backend/inference.py backend/fetch_weights.py \
+     backend/entrypoint.sh ./
 RUN chmod +x ./entrypoint.sh
 RUN mkdir -p ./storage/uploads
 COPY --from=frontend /app/frontend/dist /app/frontend/dist
